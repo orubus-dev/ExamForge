@@ -2,9 +2,6 @@ import Link from "next/link";
 import { ShieldCheck, MonitorSmartphone, LockKeyhole, FileText } from "lucide-react";
 import { Card } from "@/components/ui";
 
-export const runtime = "edge";
-export const dynamic = "force-dynamic";
-
 export default function LandingPage() {
   return (
     <div className="flex min-h-screen flex-col">
