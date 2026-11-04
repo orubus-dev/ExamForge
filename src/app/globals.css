@@ -1,0 +1,74 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #fafaf8;
+  --fg: #302f2b;
+  --card: #ffffff;
+  --subtle: #f3f2ef;
+  --line: #e5e4e0;
+  --muted: #808080;
+  --accent: #abd1c6;
+  --accent-strong: #8fbfaf;
+  --accent-ink: #171614;
+}
+
+.dark {
+  --bg: #232220;
+  --fg: #eceae6;
+  --card: #2c2b28;
+  --subtle: #34332f;
+  --line: #454440;
+  --muted: #98948a;
+  --accent: #abd1c6;
+  --accent-strong: #c7e4dc;
+  --accent-ink: #171614;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--fg);
+}
+
+body {
+  font-feature-settings: "cv02", "cv03";
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: #abd1c6;
+  color: #171614;
+}
+
+/* Slim scrollbars for long console lists */
+.scroll-slim {
+  scrollbar-width: thin;
+  scrollbar-color: #bfbbb2 transparent;
+}
+.scroll-slim::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-slim::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-slim::-webkit-scrollbar-thumb {
+  background: #d8d5ce;
+  border-radius: 8px;
+}
+.dark .scroll-slim::-webkit-scrollbar-thumb {
+  background: #454440;
+}
+
+/* Remove number input spinners for cleaner exam editor */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
