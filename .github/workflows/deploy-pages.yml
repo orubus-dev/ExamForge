@@ -27,6 +27,8 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
 
+      - name: Route root to prerendered landing asset
+        run: node -e "const f='.vercel/output/static/_routes.json';const j=JSON.parse(require('fs').readFileSync(f));j.exclude.push('/');require('fs').writeFileSync(f,JSON.stringify(j))"
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
