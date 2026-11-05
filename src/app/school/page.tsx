@@ -22,6 +22,9 @@ export default async function SchoolPage() {
   const orgMembership = viewer.memberships.find((m) => m.role === "org_admin");
   const school = viewer.schools.find((s) => s.id === orgMembership?.school_id) ?? null;
 
+  // No school yet → the dedicated creation flow.
+  if (!school) redirect("/school/new");
+
   let classes: SchoolClassRow[] = [];
   let members: SchoolMemberRow[] = [];
   let invites: SchoolInvite[] = [];
@@ -117,7 +120,7 @@ export default async function SchoolPage() {
       }}
     >
       <div className="mb-6">
-        <h1 className="text-xl font-semibold tracking-tight">School</h1>
+        <h1 className="text-xl font-semibold tracking-tight">School console</h1>
       </div>
       <SchoolClient {...data} />
     </AppShell>

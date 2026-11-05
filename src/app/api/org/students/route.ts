@@ -12,6 +12,16 @@ const Body = z.object({
   password: z.string().min(6).max(200),
 });
 
+/**
+ * Create a school-issued student account:
+ *  1. claim a readable Exam ID (tag) via the claim_student_tag RPC
+ *  2. create the auth user with a synthetic <tag>@students.examforge.app email
+ *  3. upsert the profile + school membership (with class)
+ *
+ * Allowed for the school admin AND its teachers (teachers create students for
+ * their own classes — the whole point of a classroom tool).
+ */
+
 function nameBase(fullName: string): string {
   const first = fullName.trim().split(/\s+/)[0] ?? "stu";
   return (first.toUpperCase().replace(/[^A-Z]/g, "") + "STU").slice(0, 4);
@@ -30,8 +40,8 @@ export async function POST(req: Request) {
   if (!parsed.data) return parsed.res;
   const { school_id, full_name, class_id, password } = parsed.data;
 
-  const member = roleMember(auth.memberships, ["org_admin"], school_id);
-  if (!member) return bad("Only the school admin can create student accounts.", 403);
+  const member = roleMember(auth.memberships, ["org_admin", "teacher"], school_id);
+  if (!member) return bad("Only this school's teachers or admin can create student accounts.", 403);
 
   const admin = supabaseAdmin();
   try {
@@ -108,7 +118,19 @@ export async function POST(req: Request) {
       payload: { tag },
     });
 
-    return ok({ tag, user_id: userId });
+    // Notify the creating staff member with the issued credentials so they can
+    // hand them over — the password is shown once, right in the modal.
+    if (auth.user.id !== userId) {
+      await admin.from("inbox_messages").insert({
+        user_id: auth.user.id,
+        kind: "student_created",
+        title: `Student account created — ${full_name}`,
+        body: `Exam ID ${tag}. Temporary password: ${password}. Share it securely; the student should change it after first sign-in.`,
+        payload: { tag, school_id },
+      });
+    }
+
+    return ok({ tag, user_id: userId, temp_password: password });
   } catch (e) {
     console.error("[examforge:org-students]", e);
     return bad("Something went wrong on our side. Please retry.", 500);

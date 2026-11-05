@@ -16,13 +16,65 @@ export default async function ExamsPage() {
   const viewer = await getViewer();
   if (!viewer) redirect("/auth");
   const role = primaryRole(viewer);
-  if (role !== "teacher" && role !== "org_admin") redirect("/dash");
+  if (!role) redirect("/onboarding");
 
   const supabase = supabaseServer();
   const membership =
     viewer.memberships.find((m) => m.role === "org_admin") ??
     viewer.memberships.find((m) => m.role === "teacher");
-  if (!membership) redirect("/dash");
+  const isStaff = role === "teacher" || role === "org_admin";
+  if (!isStaff) {
+    // Students: browse live exams and join with a code — no creation UI.
+    const inbox0 = await fetchInboxData(viewer.user, viewer.profile?.username);
+    const { data: live } = await supabase
+      .from("exams")
+      .select("id,title,subject,status,invite_code,created_at")
+      .eq("status", "live")
+      .order("created_at", { ascending: false })
+      .limit(50);
+    const liveExams = (live as Exam[]) ?? [];
+    return (
+      <AppShell
+        viewer={{
+          name: viewer.profile?.full_name || viewer.user.email || "you",
+          role,
+          schoolName: viewer.schools[0]?.name ?? null,
+          unread: unreadCount(inbox0),
+          studentTag: viewer.profile?.student_tag ?? null,
+        }}
+      >
+        <div className="mb-6">
+          <h1 className="text-xl font-semibold tracking-tight">Exams</h1>
+        </div>
+        {liveExams.length === 0 ? (
+          <EmptyState
+            icon={<FileStack size={24} />}
+            title="No live exams right now"
+            hint="When a teacher starts an exam for your class it appears here, or join with a code from your dashboard."
+          />
+        ) : (
+          <Card className="p-0">
+            <ul className="divide-y divide-line">
+              {liveExams.map((ex) => (
+                <li key={ex.id} className="flex items-center justify-between gap-3 px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{ex.title}</p>
+                    <p className="text-xs text-muted">{ex.subject || "—"} · <span className="font-mono">{ex.invite_code}</span></p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge tone={STATUS_TONE[ex.status]}>{STATUS_LABEL[ex.status]}</Badge>
+                    <Link href={`/exam/join?code=${ex.invite_code}`} className={linkClass("secondary", "sm")}>
+                      Join
+                    </Link>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        )}
+      </AppShell>
+    );
+  }
 
   const { data: examRows } = await supabase
     .from("exams")
@@ -37,7 +89,7 @@ export default async function ExamsPage() {
       viewer={{
         name: viewer.profile?.full_name || viewer.user.email || "you",
         role,
-        schoolName: viewer.schools.find((s) => s.id === membership.school_id)?.name ?? null,
+        schoolName: viewer.schools.find((s) => s.id === membership?.school_id)?.name ?? null,
         unread: unreadCount(inbox),
         studentTag: viewer.profile?.student_tag ?? null,
       }}

@@ -2,7 +2,11 @@ import { redirect } from "next/navigation";
 import { AppShell, ThemeToggle } from "@/components/AppShell";
 import SettingsClient from "@/components/settings/SettingsClient";
 import { getViewer, primaryRole } from "@/lib/session";
+import { supabaseServer } from "@/lib/supabase/server";
 import { fetchInboxData, unreadCount } from "@/lib/inbox";
+import { TIER_LIMITS } from "@/lib/plans";
+import { effectiveTier } from "@/lib/tiers";
+import type { Tier } from "@/lib/types";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
@@ -12,6 +16,22 @@ export default async function SettingsPage() {
   if (!viewer) redirect("/auth");
   const role = primaryRole(viewer);
   const inbox = await fetchInboxData(viewer.user, viewer.profile?.username);
+
+  // Plan info — staff only. Students never see plans.
+  let plan: { current: Tier; activeExams: number } | null = null;
+  if (role === "org_admin" || role === "teacher") {
+    const current = await effectiveTier(viewer.user.id, viewer.schools[0]?.plan ?? null);
+    const supabase = supabaseServer();
+    const activeRes = await supabase
+      .from("exams")
+      .select("id", { count: "exact" })
+      .eq("created_by", viewer.user.id)
+      .in("status", ["draft", "ready", "live"]);
+    plan = { current, activeExams: activeRes.count ?? 0 };
+  } else {
+    // touch supabaseServer import usage for students (no-op)
+    void supabaseServer;
+  }
 
   return (
     <AppShell
@@ -37,6 +57,8 @@ export default async function SettingsPage() {
           provider: viewer.profile?.provider ?? "email",
           student_tag: viewer.profile?.student_tag,
         }}
+        plan={plan}
+        tiers={TIER_LIMITS}
       />
     </AppShell>
   );

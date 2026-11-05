@@ -11,6 +11,7 @@ import {
   Activity,
   KeyRound,
   Copy,
+  Radio,
   School as SchoolIcon,
 } from "lucide-react";
 import {
@@ -213,6 +214,7 @@ export default function SchoolClient(data: SchoolData) {
           { id: "classes", label: "Classes" },
           { id: "teachers", label: "Teachers" },
           { id: "students", label: "Students" },
+          { id: "broadcast", label: "Broadcast" },
           { id: "invites", label: "Invites" },
           { id: "events", label: "Events" },
         ]}
@@ -223,6 +225,7 @@ export default function SchoolClient(data: SchoolData) {
       {tab === "classes" && <ClassesTab data={data} busy={busy} setBusy={setBusy} />}
       {tab === "teachers" && <TeachersTab data={data} busy={busy} setBusy={setBusy} />}
       {tab === "students" && <StudentsTab data={data} busy={busy} setBusy={setBusy} />}
+      {tab === "broadcast" && <BroadcastTab data={data} />}
       {tab === "invites" && <InvitesTab data={data} />}
       {tab === "events" && <EventsTab data={data} />}
     </div>
@@ -753,6 +756,129 @@ function InvitesTab({ data }: { data: SchoolData }) {
             </tbody>
           </table>
         )}
+      </div>
+    </Card>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────── broadcast
+
+function BroadcastTab({ data }: { data: SchoolData }) {
+  const router = useRouter();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [audience, setAudience] = useState("all");
+  const [classId, setClassId] = useState("");
+
+  const send = async () => {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/org/broadcast", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          school_id: data.school!.id,
+          title,
+          body,
+          class_id: audience === "class" ? classId : undefined,
+        }),
+      });
+      const resBody = (await res.json()) as { delivered?: number; error?: string };
+      if (!res.ok) throw new Error(resBody.error ?? "Could not send the broadcast");
+      toast.push({
+        kind: "success",
+        title: "Broadcast sent",
+        body: `Delivered to ${resBody.delivered ?? 0} inbox${resBody.delivered === 1 ? "" : "es"}.`,
+      });
+      setTitle("");
+      setBody("");
+      router.refresh();
+    } catch (e) {
+      toast.push({
+        kind: "error",
+        title: "Broadcast failed",
+        body: e instanceof Error ? e.message : undefined,
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card className="p-6">
+      <div className="flex items-center gap-2">
+        <Radio size={18} className="text-moss-600" aria-hidden />
+        <h2 className="text-sm font-semibold">Broadcast to your school</h2>
+      </div>
+      <p className="mt-1 text-xs text-muted">
+        Lands straight in members&apos; ExamForge inbox — exam notices, closures, reminders.
+      </p>
+      <div className="mt-3 max-w-xl space-y-3">
+        <div>
+          <Label htmlFor="bc-title">Title</Label>
+          <Input
+            id="bc-title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            maxLength={120}
+            placeholder="Mid-term exams start Monday"
+          />
+        </div>
+        <div>
+          <Label htmlFor="bc-body">Message</Label>
+          <textarea
+            id="bc-body"
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            rows={4}
+            maxLength={2000}
+            className="w-full rounded-lg border border-line bg-card px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-jade-300 dark:focus:ring-jade-700"
+            placeholder="What should everyone know?"
+          />
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <Label htmlFor="bc-audience">Audience</Label>
+            <select
+              id="bc-audience"
+              value={audience}
+              onChange={(e) => setAudience(e.target.value)}
+              className="h-9 w-full rounded-lg border border-line bg-card px-2.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-jade-300"
+            >
+              <option value="all">Everyone ({data.members.length} members)</option>
+              <option value="students">Students only</option>
+              <option value="teachers">Teachers only</option>
+              <option value="class">One class</option>
+            </select>
+          </div>
+          {audience === "class" && (
+            <div>
+              <Label htmlFor="bc-class">Class</Label>
+              <select
+                id="bc-class"
+                value={classId}
+                onChange={(e) => setClassId(e.target.value)}
+                className="h-9 w-full rounded-lg border border-line bg-card px-2.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-jade-300"
+              >
+                <option value="">Pick a class…</option>
+                {data.classes.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+        <Button
+          onClick={send}
+          loading={busy}
+          disabled={title.trim().length < 2 || body.trim().length < 2 || (audience === "class" && !classId)}
+        >
+          <Radio size={15} aria-hidden /> Send broadcast
+        </Button>
       </div>
     </Card>
   );

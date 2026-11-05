@@ -7,8 +7,7 @@ export const dynamic = "force-dynamic";
 
 const Body = z.object({
   challenge_id: z.string().min(6).max(200),
-  code: z.string().trim().min(4).max(12),
-  email: z.string().trim().toLowerCase().email().max(320),
+  code: z.string().trim().regex(/^\d{4,8}$/, "Enter the digits Relay sent"),
 });
 
 function randomSecret(): string {
@@ -22,7 +21,8 @@ function randomSecret(): string {
 /**
  * Relay OTP — step 2. Verify the code with Relay, then find or create the
  * ExamForge account keyed on relay_external_id and hand back a magic-link URL
- * that gives the browser a native Supabase session.
+ * that gives the browser a native Supabase session. No email input needed —
+ * Relay identifies the person.
  */
 export async function POST(req: Request) {
   const limited = rateGuard(req, "auth-relay-verify");
@@ -30,7 +30,7 @@ export async function POST(req: Request) {
 
   const parsed = await parseBody(req, Body);
   if (!parsed.data) return parsed.res;
-  const { challenge_id, code, email } = parsed.data;
+  const { challenge_id, code } = parsed.data;
 
   const clientId = process.env.RELAY_CLIENT_ID;
   const clientSecret = process.env.RELAY_CLIENT_SECRET;
@@ -48,14 +48,19 @@ export async function POST(req: Request) {
       body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, challenge_id, code }),
       cache: "no-store",
     });
-    if (!verifyRes.ok) return bad("That code is not valid or has expired.", 401);
-    const v = (await verifyRes.json()) as {
+    const v = (await verifyRes.json().catch(() => ({}))) as {
       ok?: boolean;
-      token?: string;
       external_id?: string;
+      username?: string | null;
+      display_name?: string | null;
+      error?: string;
     };
-    if (!v?.ok || !v.external_id) return bad("That code is not valid or has expired.", 401);
+    if (!verifyRes.ok || !v?.ok || !v.external_id) {
+      return bad(v?.error ?? "That code is not valid or has expired.", verifyRes.status || 401);
+    }
     const externalId = v.external_id;
+    const relayUsername = v.username ?? null;
+    const displayName = v.display_name ?? relayUsername ?? "Relay user";
 
     const origin = new URL(req.url).origin;
     const admin = supabaseAdmin();
@@ -67,35 +72,31 @@ export async function POST(req: Request) {
       .maybeSingle();
 
     let userId = existing.data?.id as string | undefined;
-    let userEmail: string = email;
+    let userEmail: string;
 
     if (!userId) {
+      // Synthetic address keyed on the external id — the person is identified
+      // by Relay, not by an email form field.
+      userEmail = `relay-${externalId}@users.examforge.app`;
       const created = await admin.auth.admin.createUser({
-        email,
+        email: userEmail,
         email_confirm: true,
         password: randomSecret(),
-        user_metadata: { provider: "relay", relay_external_id: externalId },
+        user_metadata: {
+          provider: "relay",
+          relay_external_id: externalId,
+          username: relayUsername,
+          full_name: displayName,
+        },
       });
-      if (created.error) {
-        // The address may already belong to an earlier signup — fall back to a
-        // unique synthetic address keyed on the external id.
-        const alt = await admin.auth.admin.createUser({
-          email: `relay-${externalId}@users.examforge.app`,
-          email_confirm: true,
-          password: randomSecret(),
-          user_metadata: { provider: "relay", relay_external_id: externalId },
-        });
-        if (alt.error) return bad("Could not link the Relay identity.", 500);
-        userId = alt.data.user.id;
-        userEmail = alt.data.user.email ?? `relay-${externalId}@users.examforge.app`;
-      } else {
-        userId = created.data.user.id;
-      }
+      if (created.error) return bad("Could not link the Relay identity.", 500);
+      userId = created.data.user.id;
       await admin.from("profiles").upsert(
         {
           id: userId,
           kind: "student",
-          full_name: email.split("@")[0],
+          full_name: displayName,
+          username: relayUsername,
           provider: "relay",
           relay_external_id: externalId,
         },
@@ -103,7 +104,7 @@ export async function POST(req: Request) {
       );
     } else {
       const u = await admin.auth.admin.getUserById(userId);
-      userEmail = u.data?.user?.email ?? email;
+      userEmail = u.data?.user?.email ?? `relay-${externalId}@users.examforge.app`;
     }
 
     const link = await admin.auth.admin.generateLink({
@@ -114,7 +115,7 @@ export async function POST(req: Request) {
     const actionLink = link.data?.properties?.action_link;
     if (!actionLink) return bad("Could not start a session — try again.", 500);
 
-    return ok({ ok: true, token: v.token ?? null, redirect_url: actionLink });
+    return ok({ ok: true, redirect_url: actionLink });
   } catch (e) {
     console.error("[examforge:relay-verify]", e);
     return bad("Relay sign-in is unreachable right now.", 502);

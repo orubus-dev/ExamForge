@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   FileStack,
   Plus,
   Users,
+  UserPlus,
   GraduationCap,
   MailCheck,
   Building2,
@@ -14,8 +15,20 @@ import {
   LogIn,
   Inbox as InboxIcon,
   Monitor,
+  Radio,
 } from "lucide-react";
-import { Badge, Button, Card, EmptyState, Input, linkClass, useToast } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  Input,
+  Label,
+  Modal,
+  Select,
+  linkClass,
+  useToast,
+} from "@/components/ui";
 import { STATUS_LABEL, STATUS_TONE, cn } from "@/lib/utils";
 import type { ExamStatus } from "@/lib/types";
 import type { ShellViewer } from "@/components/AppShell";
@@ -29,43 +42,23 @@ export interface DashExam {
   created_at: string;
 }
 
+export interface TeacherClass {
+  id: string;
+  name: string;
+  short_code: string;
+}
+
 export interface DashData extends ShellViewer {
   kind: string;
   hasMemberships: boolean;
+  schoolId: string | null;
   exams: DashExam[];
-  classNames: string[];
+  classes: TeacherClass[];
   counts: { members: number; classes: number; invites: number };
-}
-
-export default function DashClient(data: DashData) {
-  const router = useRouter();
-  const toast = useToast();
-
-  // First-run users without a school land on onboarding.
-  useEffect(() => {
-    if (data.hasMemberships) return;
-    try {
-      if (localStorage.getItem("ef-onboarded") !== "1") {
-        router.replace("/onboarding");
-      }
-    } catch {
-      router.replace("/onboarding");
-    }
-  }, [data.hasMemberships, router]);
-
-  return (
-    <div className="space-y-6">
-      {data.role === "student" && <StudentView data={data} />}
-      {data.role === "teacher" && <TeacherView data={data} />}
-      {data.role === "org_admin" && <OrgView data={data} />}
-      {data.role === "independent" && <IndependentView data={data} />}
-    </div>
-  );
 }
 
 function JoinCodeForm() {
   const router = useRouter();
-  const toast = useToast();
   return (
     <form
       className="flex gap-2"
@@ -85,7 +78,9 @@ function JoinCodeForm() {
   );
 }
 
-function StudentView({ data }: { data: DashData }) {
+// ───────────────────────────────────────────────────────────────────── student
+
+export function StudentView({ data }: { data: DashData }) {
   const toast = useToast();
   return (
     <div className="grid gap-4 lg:grid-cols-3">
@@ -176,7 +171,11 @@ function StudentView({ data }: { data: DashData }) {
   );
 }
 
-function TeacherView({ data }: { data: DashData }) {
+// ───────────────────────────────────────────────────────────────────── teacher
+
+export function TeacherView({ data }: { data: DashData }) {
+  const [createOpen, setCreateOpen] = useState(false);
+
   return (
     <div className="grid gap-4 lg:grid-cols-3">
       <Card className="p-6 lg:col-span-2">
@@ -194,7 +193,7 @@ function TeacherView({ data }: { data: DashData }) {
             <EmptyState
               icon={<FileStack size={24} />}
               title="No exams yet"
-              hint="Create your first exam — paste a document or add questions manually."
+              hint="Create your first exam — import a document, run OCR, or add questions manually."
               action={
                 <Link href="/exams/new" className={linkClass("primary", "sm")}>
                   <Plus size={16} aria-hidden /> New exam
@@ -230,19 +229,45 @@ function TeacherView({ data }: { data: DashData }) {
       <div className="space-y-4">
         <Card className="p-6">
           <div className="flex items-center gap-2">
+            <UserPlus size={18} className="text-moss-600" aria-hidden />
+            <h2 className="text-sm font-semibold">Create student account</h2>
+          </div>
+          <p className="mt-3 text-xs text-muted">
+            Issue a school Exam ID (no email needed) — the student signs in with it and a password.
+          </p>
+          <Button
+            size="sm"
+            className="mt-3"
+            onClick={() => setCreateOpen(true)}
+            disabled={data.classes.length === 0}
+          >
+            <Plus size={15} aria-hidden /> New student
+          </Button>
+          {data.classes.length === 0 && (
+            <p className="mt-2 text-[11px] text-muted">
+              Ask your school admin to create a class first.
+            </p>
+          )}
+        </Card>
+
+        <Card className="p-6">
+          <div className="flex items-center gap-2">
             <GraduationCap size={18} className="text-moss-600" aria-hidden />
             <h2 className="text-sm font-semibold">Classes</h2>
           </div>
-          {data.classNames.length === 0 ? (
+          {data.classes.length === 0 ? (
             <p className="mt-3 text-xs text-muted">No classes yet — your school admin creates them.</p>
           ) : (
             <div className="mt-3 flex flex-wrap gap-1.5">
-              {data.classNames.map((c) => (
-                <Badge key={c} tone="neutral">{c}</Badge>
+              {data.classes.map((c) => (
+                <Link key={c.id} href={`/classes/${c.id}`}>
+                  <Badge tone="neutral">{c.name}</Badge>
+                </Link>
               ))}
             </div>
           )}
         </Card>
+
         <Card className="p-6">
           <div className="flex items-center gap-2">
             <InboxIcon size={18} className="text-moss-600" aria-hidden />
@@ -256,11 +281,139 @@ function TeacherView({ data }: { data: DashData }) {
           </Link>
         </Card>
       </div>
+
+      <CreateStudentModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        classes={data.classes}
+        schoolId={data.schoolId ?? null}
+      />
     </div>
   );
 }
 
-function OrgView({ data }: { data: DashData }) {
+export interface CreateStudentModalProps {
+  open: boolean;
+  onClose: () => void;
+  classes: TeacherClass[];
+  schoolId: string | null;
+}
+
+/** Teacher-facing: issue a school student account (Exam ID + password). */
+export function CreateStudentModal({ open, onClose, classes, schoolId }: CreateStudentModalProps) {
+  const router = useRouter();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [issued, setIssued] = useState<{ tag: string; temp_password: string } | null>(null);
+
+  const submit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!schoolId) return;
+    const form = new FormData(e.currentTarget);
+    setBusy(true);
+    try {
+      const res = await fetch("/api/org/students", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          school_id: schoolId,
+          full_name: String(form.get("full_name") ?? ""),
+          class_id: String(form.get("class_id") ?? "") || undefined,
+          password: String(form.get("password") ?? ""),
+        }),
+      });
+      const body = (await res.json()) as { tag?: string; temp_password?: string; error?: string };
+      if (!res.ok || !body.tag) throw new Error(body.error ?? "Could not create the account");
+      setIssued({ tag: body.tag, temp_password: body.temp_password ?? "" });
+      router.refresh();
+    } catch (err) {
+      toast.push({ kind: "error", title: "Create failed", body: err instanceof Error ? err.message : undefined });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open={open} onClose={() => { setIssued(null); onClose(); }} title="Create student account">
+      {issued ? (
+        <div className="space-y-3">
+          <p className="text-sm">Account created. Hand these to the student:</p>
+          <div className="rounded-lg border border-line bg-subtle p-3">
+            <p className="text-xs text-muted">Exam ID</p>
+            <p className="font-mono text-lg font-semibold tracking-wider">{issued.tag}</p>
+            {issued.temp_password && (
+              <>
+                <p className="mt-2 text-xs text-muted">Temporary password</p>
+                <p className="font-mono text-sm">{issued.temp_password}</p>
+              </>
+            )}
+          </div>
+          <p className="text-xs text-muted">
+            The student signs in with <span className="font-mono">{issued.tag}</span> on the sign-in
+            page under &ldquo;School account&rdquo;, then should change the password in Settings.
+          </p>
+          <Button
+            className="w-full"
+            onClick={() => {
+              setIssued(null);
+              onClose();
+            }}
+          >
+            Done
+          </Button>
+        </div>
+      ) : (
+        <form className="space-y-3" onSubmit={submit}>
+          <div>
+            <Label htmlFor="cs-name">Full name</Label>
+            <Input id="cs-name" name="full_name" required minLength={2} maxLength={120} placeholder="Ada Lovelace" />
+          </div>
+          <div>
+            <Label htmlFor="cs-class">Class</Label>
+            <Select id="cs-class" name="class_id" required>
+              {classes.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({c.short_code})
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <Label htmlFor="cs-password">Password</Label>
+            <Input
+              id="cs-password"
+              name="password"
+              type="text"
+              required
+              minLength={6}
+              maxLength={40}
+              placeholder="At least 6 characters"
+              defaultValue={suggestPassword()}
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" size="sm" loading={busy}>
+              Create account
+            </Button>
+          </div>
+        </form>
+      )}
+    </Modal>
+  );
+}
+
+function suggestPassword(): string {
+  const words = ["forge", "bright", "quartz", "meadow", "spark", "orbit", "cedar", "lumen"];
+  const w = words[Math.floor(Math.random() * words.length)];
+  return `${w}-${Math.floor(1000 + Math.random() * 9000)}`;
+}
+
+// ─────────────────────────────────────────────────────────────────── org admin
+
+export function OrgView({ data }: { data: DashData }) {
   return (
     <div className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-3">
@@ -289,47 +442,15 @@ function OrgView({ data }: { data: DashData }) {
           <Link href="/school" className={linkClass("primary", "sm")}>
             Manage school
           </Link>
-          <Link href="/exams/new" className={linkClass("secondary", "sm")}>
-            <Plus size={16} aria-hidden /> New exam
-          </Link>
           <Link href="/classes" className={linkClass("secondary", "sm")}>
             Classes
           </Link>
-          <Link href="/channels" className={linkClass("secondary", "sm")}>
-            Channels
-          </Link>
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-function IndependentView({ data }: { data: DashData }) {
-  return (
-    <div className="grid gap-4 md:grid-cols-2">
-      <Card className="p-6">
-        <h2 className="text-sm font-semibold">You&apos;re independent for now</h2>
-        <p className="mt-2 text-xs text-muted">
-          {data.kind === "teacher"
-            ? "Schools can invite you from the School console — the invite lands in your inbox. Or create your own school to unlock exams."
-            : "A school can invite you from the School console — the invite lands in your inbox with your class attached."}
-        </p>
-        <div className="mt-4 flex gap-2">
-          <Link href="/school" className={linkClass("primary", "sm")}>
-            <Building2 size={16} aria-hidden /> Create a school
+          <Link href="/exams" className={linkClass("secondary", "sm")}>
+            Exams
           </Link>
           <Link href="/inbox" className={linkClass("secondary", "sm")}>
-            Check inbox
+            <Radio size={15} aria-hidden /> Broadcasts & inbox
           </Link>
-        </div>
-      </Card>
-      <Card className="p-6">
-        <h2 className="text-sm font-semibold">Join exam with code</h2>
-        <p className="mt-2 text-xs text-muted">
-          Exam codes only work once your school membership is active.
-        </p>
-        <div className="mt-3">
-          <JoinCodeForm />
         </div>
       </Card>
     </div>

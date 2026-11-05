@@ -5,12 +5,19 @@ export const runtime = "edge";
 export const dynamic = "force-dynamic";
 
 const Body = z.object({
-  email: z.string().trim().toLowerCase().email().max(320),
+  username: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .min(2)
+    .max(40)
+    .regex(/^[a-z0-9_.-]+$/, "Usernames are letters, numbers, dots, dashes"),
 });
 
 /**
- * Relay OTP — step 1. Ask the Relay auth-challenge function to send a one-time
- * code to the email. Returns the challenge id for verification.
+ * Relay OTP — step 1. Ask the Relay auth-challenge function to resolve the
+ * username and send a one-time code to that person (their Relay channel).
+ * Returns the challenge id for verification.
  */
 export async function POST(req: Request) {
   const limited = rateGuard(req, "auth-relay-otp");
@@ -18,7 +25,7 @@ export async function POST(req: Request) {
 
   const parsed = await parseBody(req, Body);
   if (!parsed.data) return parsed.res;
-  const { email } = parsed.data;
+  const { username } = parsed.data;
 
   const clientId = process.env.RELAY_CLIENT_ID;
   const clientSecret = process.env.RELAY_CLIENT_SECRET;
@@ -36,16 +43,20 @@ export async function POST(req: Request) {
       body: JSON.stringify({
         client_id: clientId,
         client_secret: clientSecret,
-        channel: "email",
-        destination: email,
+        username,
       }),
       cache: "no-store",
     });
-    if (!res.ok) return bad("Relay could not send a code to that address.", 502);
-    const data = (await res.json()) as { challenge_id?: string; id?: string };
-    const challengeId = data.challenge_id ?? data.id;
-    if (!challengeId) return bad("Relay did not return a challenge.", 502);
-    return ok({ challenge_id: challengeId });
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      challenge_id?: string;
+      destination_hint?: string;
+      error?: string;
+    };
+    if (!res.ok || !data.challenge_id) {
+      return bad(data.error ?? "Relay could not send a code right now.", res.status === 401 ? 502 : res.status || 502);
+    }
+    return ok({ challenge_id: data.challenge_id, destination_hint: data.destination_hint ?? null });
   } catch (e) {
     console.error("[examforge:relay-otp]", e);
     return bad("Relay sign-in is unreachable right now.", 502);

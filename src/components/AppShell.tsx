@@ -10,27 +10,43 @@ import {
   Building2,
   MessagesSquare,
   Inbox,
-  CreditCard,
   Settings as SettingsIcon,
   LogOut,
   Moon,
   Sun,
-  Inbox as InboxIcon,
+  BookOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
+export type ViewerRole = "org_admin" | "teacher" | "student" | "independent";
+
 export interface ShellViewer {
   name: string;
-  role: "org_admin" | "teacher" | "student" | "independent";
+  role: ViewerRole;
   schoolName: string | null;
   unread: number;
   studentTag: string | null;
 }
 
-function Wordmark() {
+/** Canonical home for each role. */
+export function roleHome(role: ViewerRole): string {
+  switch (role) {
+    case "org_admin":
+      return "/school/dashboard";
+    case "teacher":
+      return "/teacher/dashboard";
+    case "student":
+      return "/student/dashboard";
+    default:
+      return "/onboarding";
+  }
+}
+
+function Wordmark({ role }: { role: ViewerRole }) {
+  const home = role === "independent" ? "/onboarding" : roleHome(role);
   return (
-    <Link href="/dash" className="flex items-center gap-1 text-[15px] font-bold tracking-tight">
+    <Link href={home} className="flex items-center gap-1 text-[15px] font-bold tracking-tight">
       <span>Exam</span>
       <span className="rounded-md bg-accent px-1 py-0.5 text-[var(--accent-ink)]">Forge</span>
     </Link>
@@ -73,14 +89,24 @@ export function AppShell({
   const pathname = usePathname();
   const router = useRouter();
 
+  // Role-scoped navigation — students, teachers and schools see different apps.
   const links: { href: string; label: string; icon: ReactNode; badge?: number }[] = [];
-  links.push({ href: "/dash", label: "Dash", icon: <LayoutDashboard size={16} /> });
-  if (viewer.role === "org_admin" || viewer.role === "teacher") {
+  const home = roleHome(viewer.role);
+  if (viewer.role === "independent") {
+    links.push({ href: "/onboarding", label: "Get set up", icon: <LayoutDashboard size={16} /> });
+  } else {
+    links.push({ href: home, label: viewer.role === "org_admin" ? "School" : "Dash", icon: <LayoutDashboard size={16} /> });
+  }
+  if (viewer.role === "org_admin") {
+    links.push({ href: "/classes", label: "Classes", icon: <GraduationCap size={16} /> });
+    links.push({ href: "/exams", label: "Exams", icon: <FileStack size={16} /> });
+  }
+  if (viewer.role === "teacher") {
     links.push({ href: "/exams", label: "Exams", icon: <FileStack size={16} /> });
     links.push({ href: "/classes", label: "Classes", icon: <GraduationCap size={16} /> });
   }
-  if (viewer.role === "org_admin") {
-    links.push({ href: "/school", label: "School", icon: <Building2 size={16} /> });
+  if (viewer.role === "student") {
+    links.push({ href: "/exams", label: "Exams", icon: <FileStack size={16} /> });
   }
   links.push({ href: "/channels", label: "Channels", icon: <MessagesSquare size={16} /> });
   links.push({
@@ -89,7 +115,9 @@ export function AppShell({
     icon: <Inbox size={16} />,
     badge: viewer.unread > 0 ? viewer.unread : undefined,
   });
-  links.push({ href: "/plans", label: "Plans", icon: <CreditCard size={16} /> });
+  if (viewer.role !== "student") {
+    links.push({ href: "/settings#plan", label: "Plans", icon: <BookOpen size={16} /> });
+  }
   links.push({ href: "/settings", label: "Settings", icon: <SettingsIcon size={16} /> });
 
   const signOut = async () => {
@@ -99,13 +127,13 @@ export function AppShell({
   };
 
   const active = (href: string) =>
-    href === "/dash" ? pathname === "/dash" : pathname.startsWith(href);
+    href === home ? pathname === home : pathname.startsWith(href.split("#")[0]);
 
   return (
     <div className="flex min-h-screen flex-col">
       <header className="sticky top-0 z-40 border-b border-line bg-background/95 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-6xl items-center gap-4 px-4 sm:px-6">
-          <Wordmark />
+          <Wordmark role={viewer.role} />
           <nav aria-label="Primary" className="scroll-slim hidden items-center gap-1 overflow-x-auto md:flex">
             {links.map((l) => (
               <Link
@@ -177,10 +205,7 @@ export function AppShell({
       </main>
       <footer className="mt-auto border-t border-line bg-card">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-4 py-4 text-xs text-muted sm:px-6">
-          <span className="flex items-center gap-1.5">
-            <InboxIcon size={14} aria-hidden />
-            ExamForge — lightweight CBT for schools
-          </span>
+          <span>ExamForge — lightweight CBT for schools</span>
           <span>examforage.pages.dev</span>
         </div>
       </footer>

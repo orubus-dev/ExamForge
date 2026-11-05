@@ -34,6 +34,7 @@ import {
 } from "@/components/ui";
 import { copyText, inviteLink, STATUS_LABEL, STATUS_TONE } from "@/lib/utils";
 import { parseQuestionsFromText } from "@/lib/parser";
+import { extractDocText } from "@/lib/docparse";
 import type { ExamSettings, Question, QuestionDraft, QuestionType, ClassRow } from "@/lib/types";
 
 export interface EditExamData {
@@ -945,21 +946,8 @@ function ImportTab({ onParsed }: { onParsed: (drafts: QuestionDraft[]) => Promis
   const pdfExtract = async (file: File) => {
     setBusy("pdf");
     try {
-      const pdfjs = await import("pdfjs-dist");
-      pdfjs.GlobalWorkerOptions.workerSrc =
-        "https://unpkg.com/pdfjs-dist@4.7.76/build/pdf.worker.min.mjs";
-      const buf = await file.arrayBuffer();
-      const doc = await pdfjs.getDocument({ data: buf }).promise;
-      let out = "";
-      for (let i = 1; i <= doc.numPages; i++) {
-        const page = await doc.getPage(i);
-        const content = await page.getTextContent();
-        for (const item of content.items) {
-          if ("str" in item) out += item.str + (item.hasEOL ? "\n" : " ");
-        }
-        out += "\n";
-      }
-      runParser(out, "PDF");
+      const { extractDocText } = await import("@/lib/docparse");
+      runParser(await extractDocText(file), "PDF");
     } catch (e) {
       toast.push({
         kind: "error",
@@ -1021,21 +1009,27 @@ function ImportTab({ onParsed }: { onParsed: (drafts: QuestionDraft[]) => Promis
             <Upload size={16} className="text-moss-600" aria-hidden />
             <h2 className="text-sm font-semibold">Document</h2>
           </div>
-          <p className="mt-1 text-xs text-muted">.txt, .md or a text-based .pdf</p>
+          <p className="mt-1 text-xs text-muted">
+            .txt · .md · .csv · .pdf · .docx · .xlsx/.xls — one file, any format.
+          </p>
           <input
             ref={fileRef}
             type="file"
-            accept=".txt,.md,.markdown,.pdf,text/plain,application/pdf"
+            accept=".txt,.md,.markdown,.csv,.tsv,.pdf,.docx,.xlsx,.xls,.xlsm,.ods,text/plain,application/pdf"
             className="sr-only"
             onChange={(e) => {
               const file = e.target.files?.[0];
               e.target.value = "";
               if (!file) return;
-              if (file.name.toLowerCase().endsWith(".pdf")) {
-                void pdfExtract(file);
-              } else {
-                void file.text().then((t) => runParser(t, "file"));
-              }
+              void extractDocText(file)
+                .then((t) => runParser(t, "file"))
+                .catch((err: unknown) =>
+                  toast.push({
+                    kind: "error",
+                    title: "Could not read that file",
+                    body: err instanceof Error ? err.message : "Try txt, csv, pdf, docx or xlsx.",
+                  })
+                );
             }}
           />
           <Button
