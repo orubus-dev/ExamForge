@@ -8,10 +8,14 @@ export const dynamic = "force-dynamic";
 export default async function AuthPage({
   searchParams,
 }: {
-  searchParams?: { mode?: string };
+  searchParams?: { mode?: string; next?: string };
 }) {
   const viewer = await getViewer();
-  if (viewer) redirect("/dash");
+  if (viewer) {
+    // Already signed in — honor an invite-link detour if one is queued.
+    const next = searchParams?.next;
+    redirect(next && next.startsWith("/") ? next : "/dash");
+  }
   const mode = searchParams?.mode === "signup" ? "signup" : "signin";
   return <AuthClient initialMode={mode} />;
 }

@@ -16,7 +16,10 @@ export default function AuthClient({ initialMode }: { initialMode: "signin" | "s
   const [error, setError] = useState<string | null>(null);
 
   // Where to land after a successful sign-in (e.g. an invite link set ?next=).
-  const nextParam = useSearchParams().get("next");
+  const searchParams = useSearchParams();
+  const nextParam = searchParams.get("next");
+  const oauthError = searchParams.get("error");
+  const [dismissedOAuthError, setDismissedOAuthError] = useState(false);
 
   // Relay flow — username first, then the OTP code.
   const [step, setStep] = useState<Step>("idle");
@@ -45,6 +48,9 @@ export default function AuthClient({ initialMode }: { initialMode: "signin" | "s
     });
     return () => sub.subscription.unsubscribe();
   }, [router, nextParam]);
+
+  // Surface a failed provider round-trip (Genjutsu callback redirects here).
+  const oauthErrorText = oauthError ? oauthErrorMessage(oauthError) : null;
 
   const startRelay = () => {
     setError(null);
@@ -462,10 +468,24 @@ export default function AuthClient({ initialMode }: { initialMode: "signin" | "s
           </Card>
         )}
 
-        {error && (
+        {error && !oauthErrorText && !dismissedOAuthError && (
           <p role="alert" className="mt-4 rounded-lg border border-dogwood-200 bg-dogwood-50 px-3 py-2 text-xs text-dogwood-900 dark:border-dogwood-800 dark:bg-dogwood-900/30 dark:text-dogwood-100">
             {error}
           </p>
+        )}
+
+        {oauthErrorText && !dismissedOAuthError && (
+          <div role="alert" className="mt-4 flex items-start justify-between gap-2 rounded-lg border border-dogwood-200 bg-dogwood-50 px-3 py-2 text-xs text-dogwood-900 dark:border-dogwood-800 dark:bg-dogwood-900/30 dark:text-dogwood-100">
+            <span>{oauthErrorText}</span>
+            <button
+              type="button"
+              aria-label="Dismiss"
+              onClick={() => setDismissedOAuthError(true)}
+              className="shrink-0 font-medium underline-offset-2 hover:underline"
+            >
+              Dismiss
+            </button>
+          </div>
         )}
 
         <p className="mt-6 flex items-center justify-center gap-2 text-[11px] text-muted">
@@ -501,5 +521,30 @@ function relayError(code: string): string {
       return "That code was already used — request a new one.";
     default:
       return code.length < 60 && !code.includes(" ") ? code : "Relay sign-in failed — try again.";
+  }
+}
+
+function oauthErrorMessage(code: string): string {
+  switch (code) {
+    case "expired_flow":
+      return "The sign-in session timed out — start again from the button above.";
+    case "state_mismatch":
+      return "That sign-in didn't come back the way it left — start again to stay safe.";
+    case "missing_code":
+    case "provider_error":
+      return "Genjutsu didn't complete the sign-in — start again from the button above.";
+    case "token_exchange_failed":
+    case "userinfo_failed":
+      return "We couldn't read your Genjutsu identity — start again from the button above.";
+    case "provider_not_configured":
+      return "Genjutsu sign-in isn't configured right now — try Relay or email.";
+    case "account_link_failed":
+      return "We couldn't link your Genjutsu identity to an ExamForge account — try again, or use Relay.";
+    case "session_link_failed":
+      return "Sign-in went through but the session didn't start — try once more.";
+    case "sign_in_failed":
+      return "Sign-in failed on our side — please try again.";
+    default:
+      return "Sign-in didn't complete — please try again.";
   }
 }
