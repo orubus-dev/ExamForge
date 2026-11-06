@@ -18,8 +18,9 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabaseBrowser } from "@/lib/supabase/client";
+import { roleHome, type ViewerRole } from "@/lib/routes";
 
-export type ViewerRole = "org_admin" | "teacher" | "student" | "independent";
+export type { ViewerRole } from "@/lib/routes";
 
 export interface ShellViewer {
   name: string;
@@ -27,20 +28,6 @@ export interface ShellViewer {
   schoolName: string | null;
   unread: number;
   studentTag: string | null;
-}
-
-/** Canonical home for each role. */
-export function roleHome(role: ViewerRole): string {
-  switch (role) {
-    case "org_admin":
-      return "/school/dashboard";
-    case "teacher":
-      return "/teacher/dashboard";
-    case "student":
-      return "/student/dashboard";
-    default:
-      return "/onboarding";
-  }
 }
 
 function Wordmark({ role }: { role: ViewerRole }) {

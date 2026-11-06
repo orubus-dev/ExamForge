@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import CreateSchoolClient from "@/components/school/CreateSchoolClient";
 import { getViewer, primaryRole } from "@/lib/session";
-import { roleHome } from "@/components/AppShell";
+import { roleHome } from "@/lib/routes";
 import { fetchInboxData, unreadCount } from "@/lib/inbox";
 
 export const runtime = "edge";

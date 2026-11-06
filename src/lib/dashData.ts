@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getViewer, primaryRole } from "@/lib/session";
-import { roleHome, type ShellViewer, type ViewerRole } from "@/components/AppShell";
+import { roleHome, type ViewerRole } from "@/lib/routes";
+import type { ShellViewer } from "@/components/AppShell";
 import type { DashData, DashExam, TeacherClass } from "@/components/dash/DashClient";
 import { supabaseServer } from "@/lib/supabase/server";
 import { fetchInboxData, unreadCount } from "@/lib/inbox";

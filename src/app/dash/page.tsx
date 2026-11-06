@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { getViewer, primaryRole } from "@/lib/session";
-import { roleHome } from "@/components/AppShell";
+import { roleHome } from "@/lib/routes";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic";

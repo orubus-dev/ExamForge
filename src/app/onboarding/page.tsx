@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import OnboardingClient from "@/components/dash/OnboardingClient";
 import { AppShell } from "@/components/AppShell";
 import { getViewer, primaryRole } from "@/lib/session";
-import { roleHome } from "@/components/AppShell";
+import { roleHome } from "@/lib/routes";
 import { fetchInboxData, unreadCount } from "@/lib/inbox";
 
 export const runtime = "edge";
