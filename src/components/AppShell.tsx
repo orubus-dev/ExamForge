@@ -14,7 +14,6 @@ import {
   LogOut,
   Moon,
   Sun,
-  BookOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabaseBrowser } from "@/lib/supabase/client";
@@ -102,9 +101,6 @@ export function AppShell({
     icon: <Inbox size={16} />,
     badge: viewer.unread > 0 ? viewer.unread : undefined,
   });
-  if (viewer.role !== "student") {
-    links.push({ href: "/settings#plan", label: "Plans", icon: <BookOpen size={16} /> });
-  }
   links.push({ href: "/settings", label: "Settings", icon: <SettingsIcon size={16} /> });
 
   const signOut = async () => {

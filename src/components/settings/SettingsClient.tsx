@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { KeyRound, LogOut, Save, UserRound, BookOpen } from "lucide-react";
+import { KeyRound, LogOut, Save, UserRound, BookOpen, Trash2 } from "lucide-react";
 import { Badge, Button, Card, Input, Label, useToast } from "@/components/ui";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import type { TierInfo } from "@/lib/plans";
@@ -42,6 +42,9 @@ export default function SettingsClient({
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
   const [savingPw, setSavingPw] = useState(false);
+
+  const [confirmText, setConfirmText] = useState("");
+  const [deleting, setDeleting] = useState(false);
 
   const saveProfile = async () => {
     setSavingProfile(true);
@@ -92,6 +95,31 @@ export default function SettingsClient({
     const supabase = supabaseBrowser();
     await supabase.auth.signOut();
     router.replace("/");
+  };
+
+  const deleteAccount = async () => {
+    if (confirmText !== "DELETE") return;
+    setDeleting(true);
+    try {
+      const res = await fetch("/api/users/delete", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ confirm: "DELETE" }),
+      });
+      const body = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !body.ok) throw new Error(body.error ?? "Could not delete the account.");
+      // Local session is dead either way — clear it and leave.
+      const supabase = supabaseBrowser();
+      await supabase.auth.signOut();
+      router.replace("/");
+    } catch (e) {
+      toast.push({
+        kind: "error",
+        title: "Delete failed",
+        body: e instanceof Error ? e.message : "Please retry.",
+      });
+      setDeleting(false);
+    }
   };
 
   return (
@@ -171,6 +199,39 @@ export default function SettingsClient({
           </p>
           <Button variant="danger" className="mt-3" onClick={signOut}>
             <LogOut size={15} aria-hidden /> Sign out
+          </Button>
+        </Card>
+
+        <Card className="border-dogwood-300 p-6 dark:border-dogwood-700">
+          <div className="flex items-center gap-2">
+            <Trash2 size={16} className="text-dogwood-500" aria-hidden />
+            <h2 className="text-sm font-semibold">Danger zone</h2>
+          </div>
+          <p className="mt-1 text-xs text-muted">
+            Deleting your account is permanent: your profile, exams, results, messages and school
+            memberships are removed. A school you own is wound down with it. This cannot be undone.
+          </p>
+          <div className="mt-3">
+            <Label htmlFor="del-confirm">
+              Type <span className="font-mono font-semibold">DELETE</span> to confirm
+            </Label>
+            <Input
+              id="del-confirm"
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.target.value.toUpperCase())}
+              placeholder="DELETE"
+              className="font-mono"
+              autoComplete="off"
+            />
+          </div>
+          <Button
+            variant="danger"
+            className="mt-3"
+            loading={deleting}
+            disabled={confirmText !== "DELETE"}
+            onClick={deleteAccount}
+          >
+            Delete my account forever
           </Button>
         </Card>
       </div>

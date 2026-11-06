@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Sparkles, Waves, School, Mail, KeyRound, AtSign, UserRound } from "lucide-react";
 import { Badge, Button, Card, Input, Label, Tabs, useToast } from "@/components/ui";
 import { supabaseBrowser } from "@/lib/supabase/client";
@@ -14,6 +14,9 @@ export default function AuthClient({ initialMode }: { initialMode: "signin" | "s
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Where to land after a successful sign-in (e.g. an invite link set ?next=).
+  const nextParam = useSearchParams().get("next");
 
   // Relay flow — username first, then the OTP code.
   const [step, setStep] = useState<Step>("idle");
@@ -35,13 +38,13 @@ export default function AuthClient({ initialMode }: { initialMode: "signin" | "s
   useEffect(() => {
     const supabase = supabaseBrowser();
     supabase.auth.getSession().then(({ data }) => {
-      if (data.session) router.replace("/dash");
+      if (data.session) router.replace(nextParam || "/dash");
     });
     const { data: sub } = supabase.auth.onAuthStateChange((event) => {
-      if (event === "SIGNED_IN") router.replace("/dash");
+      if (event === "SIGNED_IN") router.replace(nextParam || "/dash");
     });
     return () => sub.subscription.unsubscribe();
-  }, [router]);
+  }, [router, nextParam]);
 
   const startRelay = () => {
     setError(null);
@@ -79,9 +82,21 @@ export default function AuthClient({ initialMode }: { initialMode: "signin" | "s
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ challenge_id: challengeId, code: otp.trim() }),
       });
-      const body = (await res.json()) as { redirect_url?: string; error?: string };
-      if (!res.ok || !body.redirect_url) throw new Error(body.error ?? "Verification failed");
-      window.location.href = body.redirect_url;
+      const body = (await res.json()) as {
+        session?: { access_token: string; refresh_token: string };
+        next?: string;
+        error?: string;
+      };
+      if (!res.ok || !body.session) throw new Error(body.error ?? "Verification failed");
+      // Direct session — the code the user typed is the whole ceremony.
+      const supabase = supabaseBrowser();
+      const { error: err } = await supabase.auth.setSession({
+        access_token: body.session.access_token,
+        refresh_token: body.session.refresh_token,
+      });
+      if (err) throw new Error(err.message);
+      const next = nextParam ?? (body.next || "/dash");
+      router.replace(next);
     } catch (e) {
       setError(e instanceof Error ? relayError(e.message) : "Verification failed");
       setBusy(false);
@@ -108,7 +123,7 @@ export default function AuthClient({ initialMode }: { initialMode: "signin" | "s
         refresh_token: body.session.refresh_token,
       });
       if (err) throw new Error(err.message);
-      router.replace("/dash");
+      router.replace(nextParam || "/dash");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Sign-in failed");
       setBusy(false);
@@ -183,7 +198,7 @@ export default function AuthClient({ initialMode }: { initialMode: "signin" | "s
         refresh_token: body.session.refresh_token,
       });
       if (err) throw new Error(err.message);
-      router.replace("/dash");
+      router.replace(nextParam || "/dash");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Sign-in failed");
       setBusy(false);
@@ -226,7 +241,8 @@ export default function AuthClient({ initialMode }: { initialMode: "signin" | "s
               Relay sign-in
             </div>
             <p className="mt-1 text-xs text-muted">
-              Enter your Relay username — ExamForge sends a one-time code as a chat message to your Relay account.
+              Enter your Relay username — ExamForge sends a one-time code as a chat message from its
+              official account to your Relay chats.
             </p>
             <div className="mt-3">
               <Label htmlFor="relay-username">Relay username</Label>
@@ -264,7 +280,9 @@ export default function AuthClient({ initialMode }: { initialMode: "signin" | "s
               Enter the 6-digit code
             </div>
             <p className="mt-1 text-xs text-muted">
-              Sent from the official <span className="font-medium">ExamForge</span> account to {destinationHint || "your Relay account"} — open Relay, then check your chats.
+              Sent from the official <span className="font-medium">ExamForge</span> business account to{" "}
+              {destinationHint || "your Relay account"} — open Relay, then check your chats. Enter the
+              code here to sign straight in.
             </p>
             <div className="mt-3">
               <Input

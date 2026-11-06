@@ -31,10 +31,20 @@ function fail(origin: string, message: string) {
   return NextResponse.redirect(url.toString(), 302);
 }
 
+function clearCookies(origin: string): string[] {
+  const base = `Path=/; HttpOnly; SameSite=Lax; Max-Age=0${
+    origin.startsWith("https://") ? "; Secure" : ""
+  }`;
+  return [`ef_gj_verifier=; ${base}`, `ef_gj_state=; ${base}`];
+}
+
 /**
- * OAuth callback: exchange the code (PKCE), load the identity, find or create
- * the ExamForge user, then bounce through a Supabase magic link so the browser
- * ends up with a first-class session (detectSessionInUrl picks it up).
+ * OAuth callback (registered redirect_uri: /auth/genjutsu/callback).
+ * Exchange the code (PKCE), load the identity, find or create the ExamForge
+ * user, mint the session SERVER-SIDE, then hand the browser its fresh tokens
+ * via a URL fragment on /auth/finish. No magic-link bounce — the fragment is
+ * the standard implicit-flow shape supabase-js hydrates natively, and it never
+ * reaches any server or log.
  */
 export async function GET(req: Request) {
   const origin = new URL(req.url).origin;
@@ -42,17 +52,25 @@ export async function GET(req: Request) {
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
 
-  if (!code) return fail(origin, "missing_code");
-  if (url.searchParams.get("error")) return fail(origin, "provider_error");
+  const failRes = (msg: string) => {
+    const res = fail(origin, msg);
+    for (const c of clearCookies(origin)) res.headers.append("set-cookie", c);
+    return res;
+  };
+
+  if (!code) return failRes("missing_code");
+  if (url.searchParams.get("error")) return failRes("provider_error");
 
   const verifier = cookieValue(req, "ef_gj_verifier");
   const expectedState = cookieValue(req, "ef_gj_state");
-  if (!verifier || !expectedState) return fail(origin, "expired_flow");
-  if (state !== expectedState) return fail(origin, "state_mismatch");
+  if (!verifier || !expectedState) return failRes("expired_flow");
+  if (state !== expectedState) return failRes("state_mismatch");
 
   const clientId = process.env.GENJUTSU_CLIENT_ID;
   const clientSecret = process.env.GENJUTSU_CLIENT_SECRET;
-  if (!clientId || !clientSecret) return fail(origin, "provider_not_configured");
+  const appUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!clientId || !clientSecret || !appUrl || !anonKey) return failRes("provider_not_configured");
 
   try {
     // 1. Token exchange (PKCE verifier proves possession).
@@ -69,18 +87,18 @@ export async function GET(req: Request) {
       }),
       cache: "no-store",
     });
-    if (!tokenRes.ok) return fail(origin, "token_exchange_failed");
+    if (!tokenRes.ok) return failRes("token_exchange_failed");
     const tokenBody = (await tokenRes.json()) as { access_token?: string };
-    if (!tokenBody.access_token) return fail(origin, "token_exchange_failed");
+    if (!tokenBody.access_token) return failRes("token_exchange_failed");
 
     // 2. Identity.
     const userRes = await fetch(USERINFO_URL, {
       headers: { authorization: `Bearer ${tokenBody.access_token}` },
       cache: "no-store",
     });
-    if (!userRes.ok) return fail(origin, "userinfo_failed");
+    if (!userRes.ok) return failRes("userinfo_failed");
     const info = (await userRes.json()) as UserInfo;
-    if (!info?.sub) return fail(origin, "userinfo_failed");
+    if (!info?.sub) return failRes("userinfo_failed");
 
     // 3. Find or create the ExamForge account.
     const admin = supabaseAdmin();
@@ -92,6 +110,7 @@ export async function GET(req: Request) {
 
     let userId = existing.data?.id as string | undefined;
     let email = info.email ?? null;
+    let isNewUser = false;
 
     if (!userId) {
       const fallbackEmail = `genjutsu-${info.sub}@users.examforge.app`;
@@ -120,13 +139,14 @@ export async function GET(req: Request) {
             full_name: info.username ?? null,
           },
         });
-        if (alt.error) return fail(origin, "account_link_failed");
+        if (alt.error) return failRes("account_link_failed");
         created = alt;
         email = fallbackEmail;
       } else if (created.error) {
-        return fail(origin, "account_link_failed");
+        return failRes("account_link_failed");
       }
       userId = created.data.user.id;
+      isNewUser = true;
       await admin.from("profiles").upsert(
         {
           id: userId,
@@ -143,28 +163,55 @@ export async function GET(req: Request) {
       email = u.data?.user?.email ?? email ?? `genjutsu-${info.sub}@users.examforge.app`;
     }
 
-    if (!email) return fail(origin, "account_link_failed");
+    if (!email) return failRes("account_link_failed");
 
-    // 4. Magic link → browser gets a native session (detectSessionInUrl).
+    // 4. Mint the session server-side: one-time sign-in token exchanged at
+    //    GoTrue's JSON verify endpoint. The browser only ever receives its own
+    //    fresh tokens — no link for the user to open.
     const link = await admin.auth.admin.generateLink({
       type: "magiclink",
       email,
-      options: { redirectTo: `${origin}/auth/finish` },
     });
     const actionLink = link.data?.properties?.action_link;
-    if (!actionLink) return fail(origin, "session_link_failed");
+    if (!actionLink) return failRes("session_link_failed");
+    const tokenHash = new URL(actionLink).searchParams.get("token");
+    if (!tokenHash) return failRes("session_link_failed");
 
-    const res = NextResponse.redirect(actionLink, 302);
-    const secure = origin.startsWith("https://");
-    const clear = `Path=/; HttpOnly; SameSite=Lax; Max-Age=0${
-      secure ? "; Secure" : ""
-    }`;
-    res.headers.append("set-cookie", `ef_gj_verifier=; ${clear}`);
-    res.headers.append("set-cookie", `ef_gj_state=; ${clear}`);
+    const sessionRes = await fetch(`${appUrl}/auth/v1/verify`, {
+      method: "POST",
+      headers: { apikey: anonKey, "content-type": "application/json" },
+      body: JSON.stringify({ type: "magiclink", token_hash: tokenHash }),
+      cache: "no-store",
+    });
+    const sessionBody = (await sessionRes.json().catch(() => ({}))) as {
+      access_token?: string;
+      refresh_token?: string;
+      expires_in?: number;
+      error?: string;
+    };
+    if (!sessionRes.ok || !sessionBody.access_token || !sessionBody.refresh_token) {
+      console.error("[examforge:genjutsu-callback] session exchange failed", sessionRes.status);
+      return failRes("session_link_failed");
+    }
+
+    // 5. Deliver via /auth/finish#<implicit-flow fragment> — supabase-js
+    //    hydrates the session client-side and FinishClient hops to `next`.
+    const next = isNewUser ? "/onboarding" : "/dash";
+    const finish = new URL("/auth/finish", origin);
+    finish.searchParams.set("next", next);
+    const params = new URLSearchParams({
+      access_token: sessionBody.access_token,
+      refresh_token: sessionBody.refresh_token,
+      expires_in: String(sessionBody.expires_in ?? 3600),
+      token_type: "bearer",
+    });
+
+    const res = NextResponse.redirect(`${finish.toString()}#${params.toString()}`, 302);
+    for (const c of clearCookies(origin)) res.headers.append("set-cookie", c);
     return res;
   } catch (e) {
     console.error("[examforge:genjutsu-callback]", e);
-    return fail(origin, "sign_in_failed");
+    return failRes("sign_in_failed");
   }
 }
 

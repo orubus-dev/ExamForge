@@ -19,10 +19,10 @@ function randomSecret(): string {
 }
 
 /**
- * Relay OTP — step 2. Verify the code with Relay, then find or create the
- * ExamForge account keyed on relay_external_id and hand back a magic-link URL
- * that gives the browser a native Supabase session. No email input needed —
- * Relay identifies the person.
+ * Relay OTP — step 2. Verify the code with Relay, find or create the
+ * ExamForge account keyed on relay_external_id, then mint the session
+ * SERVER-SIDE and hand the tokens straight back. No magic link, no email,
+ * no redirect bounce — the code the user typed is the whole ceremony.
  */
 export async function POST(req: Request) {
   const limited = rateGuard(req, "auth-relay-verify");
@@ -37,7 +37,9 @@ export async function POST(req: Request) {
   const base =
     process.env.RELAY_API_BASE ||
     "https://gobwknacvpgysmgpvzqt.supabase.co/functions/v1/auth-challenge";
-  if (!clientId || !clientSecret) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!clientId || !clientSecret || !url || !anonKey) {
     return bad("Relay sign-in is not configured yet.", 503);
   }
 
@@ -62,7 +64,6 @@ export async function POST(req: Request) {
     const relayUsername = v.username ?? null;
     const displayName = v.display_name ?? relayUsername ?? "Relay user";
 
-    const origin = new URL(req.url).origin;
     const admin = supabaseAdmin();
 
     const existing = await admin
@@ -73,6 +74,7 @@ export async function POST(req: Request) {
 
     let userId = existing.data?.id as string | undefined;
     let userEmail: string;
+    let isNewUser = false;
 
     if (!userId) {
       // Synthetic address keyed on the external id — the person is identified
@@ -91,6 +93,7 @@ export async function POST(req: Request) {
       });
       if (created.error) return bad("Could not link the Relay identity.", 500);
       userId = created.data.user.id;
+      isNewUser = true;
       await admin.from("profiles").upsert(
         {
           id: userId,
@@ -107,15 +110,42 @@ export async function POST(req: Request) {
       userEmail = u.data?.user?.email ?? `relay-${externalId}@users.examforge.app`;
     }
 
+    // Mint a one-time sign-in token server-side, then exchange it at GoTrue's
+    // JSON verify endpoint for a real session. Nothing ever redirects the
+    // browser through a link — the code they typed is the only credential.
     const link = await admin.auth.admin.generateLink({
       type: "magiclink",
       email: userEmail,
-      options: { redirectTo: `${origin}/auth/finish` },
     });
     const actionLink = link.data?.properties?.action_link;
     if (!actionLink) return bad("Could not start a session — try again.", 500);
+    const tokenHash = new URL(actionLink).searchParams.get("token");
+    if (!tokenHash) return bad("Could not start a session — try again.", 500);
 
-    return ok({ ok: true, redirect_url: actionLink });
+    const sessionRes = await fetch(`${url}/auth/v1/verify`, {
+      method: "POST",
+      headers: { apikey: anonKey, "content-type": "application/json" },
+      body: JSON.stringify({ type: "magiclink", token_hash: tokenHash }),
+      cache: "no-store",
+    });
+    const sessionBody = (await sessionRes.json().catch(() => ({}))) as {
+      access_token?: string;
+      refresh_token?: string;
+      error?: string;
+    };
+    if (!sessionRes.ok || !sessionBody.access_token || !sessionBody.refresh_token) {
+      console.error("[examforge:relay-verify] session exchange failed", sessionRes.status);
+      return bad("Could not start a session — try again.", 502);
+    }
+
+    return ok({
+      ok: true,
+      session: {
+        access_token: sessionBody.access_token,
+        refresh_token: sessionBody.refresh_token,
+      },
+      next: isNewUser ? "/onboarding" : "/dash",
+    });
   } catch (e) {
     console.error("[examforge:relay-verify]", e);
     return bad("Relay sign-in is unreachable right now.", 502);

@@ -11,6 +11,7 @@ import {
   Activity,
   KeyRound,
   Copy,
+  Link2,
   Radio,
   School as SchoolIcon,
 } from "lucide-react";
@@ -716,48 +717,195 @@ function StudentsTab({ data, busy, setBusy }: TabProps) {
 }
 
 function InvitesTab({ data }: { data: SchoolData }) {
+  const router = useRouter();
+  const toast = useToast();
+  const [linkRole, setLinkRole] = useState<"student" | "teacher">("student");
+  const [linkClass, setLinkClass] = useState("");
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [madeLink, setMadeLink] = useState<string | null>(null);
+  const [revoking, setRevoking] = useState<string | null>(null);
+
+  const activeLinks = data.invites.filter(
+    (i) => !i.username && !i.email && i.status === "pending"
+  );
+
+  const createLink = async () => {
+    setLinkBusy(true);
+    try {
+      const res = await fetch("/api/org/invite-link", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          school_id: data.school!.id,
+          role: linkRole,
+          class_id: linkClass || undefined,
+        }),
+      });
+      const body = (await res.json()) as { url?: string; error?: string };
+      if (!res.ok || !body.url) throw new Error(body.error ?? "Could not create the link");
+      setMadeLink(body.url);
+      await copyText(body.url);
+      toast.push({ kind: "success", title: "Invite link ready", body: "Copied — share it with your class or staff room." });
+      router.refresh();
+    } catch (e) {
+      toast.push({
+        kind: "error",
+        title: "Link failed",
+        body: e instanceof Error ? e.message : undefined,
+      });
+    } finally {
+      setLinkBusy(false);
+    }
+  };
+
+  const revokeLink = async (id: string) => {
+    setRevoking(id);
+    try {
+      const res = await fetch("/api/org/invite-link", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ school_id: data.school!.id, id }),
+      });
+      const body = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !body.ok) throw new Error(body.error ?? "Could not revoke the link");
+      toast.push({ kind: "success", title: "Link revoked" });
+      if (madeLink && activeLinks.find((l) => l.id === id)) setMadeLink(null);
+      router.refresh();
+    } catch (e) {
+      toast.push({
+        kind: "error",
+        title: "Revoke failed",
+        body: e instanceof Error ? e.message : undefined,
+      });
+    } finally {
+      setRevoking(null);
+    }
+  };
+
   return (
-    <Card className="p-6">
-      <h2 className="text-sm font-semibold">Invites</h2>
-      <div className="scroll-slim mt-3 max-h-96 overflow-y-auto">
-        {data.invites.length === 0 ? (
-          <EmptyState title="No invites yet" hint="Invites you send appear here with their status." />
-        ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-line text-left text-xs text-muted">
-                <th className="py-2 font-medium">Target</th>
-                <th className="py-2 font-medium">Role</th>
-                <th className="py-2 font-medium">Status</th>
-                <th className="py-2 font-medium">Created</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.invites.map((i) => (
-                <tr key={i.id} className="border-b border-line/60 last:border-0">
-                  <td className="py-2">{i.username || i.email || "—"}</td>
-                  <td className="py-2 capitalize text-muted">{i.role}</td>
-                  <td className="py-2">
-                    <Badge
-                      tone={
-                        i.status === "pending"
-                          ? "warning"
-                          : i.status === "accepted"
-                            ? "success"
-                            : "neutral"
-                      }
-                    >
-                      {i.status}
-                    </Badge>
-                  </td>
-                  <td className="py-2 text-xs text-muted">{fmtDate(i.created_at)}</td>
-                </tr>
+    <div className="space-y-4">
+      <Card className="p-6">
+        <div className="flex items-center gap-2">
+          <Link2 size={16} className="text-moss-600" aria-hidden />
+          <h2 className="text-sm font-semibold">Invite link</h2>
+        </div>
+        <p className="mt-1 text-xs text-muted">
+          One shareable link — anyone who opens it joins this school themselves. Links stay open for
+          7 days and you can revoke them any time.
+        </p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <div>
+            <Label>Join as</Label>
+            <Select value={linkRole} onChange={(e) => setLinkRole(e.target.value as "student" | "teacher")}>
+              <option value="student">Student</option>
+              <option value="teacher">Teacher</option>
+            </Select>
+          </div>
+          <div>
+            <Label>Class</Label>
+            <Select value={linkClass} onChange={(e) => setLinkClass(e.target.value)}>
+              <option value="">No class</option>
+              {data.classes.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({c.short_code})
+                </option>
               ))}
-            </tbody>
-          </table>
+            </Select>
+          </div>
+        </div>
+        <Button className="mt-3" onClick={createLink} loading={linkBusy}>
+          Create invite link
+        </Button>
+
+        {madeLink && (
+          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-jade-300 bg-jade-50/60 p-3 dark:border-jade-700 dark:bg-jade-900/20">
+            <code className="min-w-0 flex-1 truncate text-xs">{madeLink}</code>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={async () => {
+                await copyText(madeLink);
+                toast.push({ kind: "success", title: "Link copied" });
+              }}
+            >
+              <Copy size={13} aria-hidden /> Copy
+            </Button>
+          </div>
         )}
-      </div>
-    </Card>
+
+        {activeLinks.length > 0 && (
+          <div className="mt-4 space-y-2">
+            <p className="text-xs font-medium text-muted">Open links</p>
+            {activeLinks.map((l) => (
+              <div
+                key={l.id}
+                className="flex flex-wrap items-center gap-2 rounded-lg border border-line p-2.5 text-xs"
+              >
+                <Badge tone="info">{l.role}</Badge>
+                <span className="text-muted">expires {fmtDate(l.expires_at)}</span>
+                <span className="ml-auto font-mono text-muted">/join/{l.token.slice(0, 8)}…</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  loading={revoking === l.id}
+                  onClick={() => revokeLink(l.id)}
+                >
+                  Revoke
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <Card className="p-6">
+        <h2 className="text-sm font-semibold">Invites</h2>
+        <div className="scroll-slim mt-3 max-h-96 overflow-y-auto">
+          {data.invites.length === 0 ? (
+            <EmptyState title="No invites yet" hint="Invites you send appear here with their status." />
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-line text-left text-xs text-muted">
+                  <th className="py-2 font-medium">Target</th>
+                  <th className="py-2 font-medium">Role</th>
+                  <th className="py-2 font-medium">Status</th>
+                  <th className="py-2 font-medium">Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.invites.map((i) => (
+                  <tr key={i.id} className="border-b border-line/60 last:border-0">
+                    <td className="py-2">
+                      {i.username || i.email || (
+                        <span className="inline-flex items-center gap-1 text-muted">
+                          <Link2 size={12} aria-hidden /> Anyone with the link
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 capitalize text-muted">{i.role}</td>
+                    <td className="py-2">
+                      <Badge
+                        tone={
+                          i.status === "pending"
+                            ? "warning"
+                            : i.status === "accepted"
+                              ? "success"
+                              : "neutral"
+                        }
+                      >
+                        {i.status}
+                      </Badge>
+                    </td>
+                    <td className="py-2 text-xs text-muted">{fmtDate(i.created_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </Card>
+    </div>
   );
 }
 

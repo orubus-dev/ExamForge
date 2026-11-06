@@ -2,15 +2,16 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 /**
- * Landing target for provider magic links. supabase-js picks the session out
- * of the URL fragment (detectSessionInUrl), then we hop to the dashboard.
+ * Session landing target. supabase-js hydrates the tokens out of the URL
+ * fragment (detectSessionInUrl), then we hop to `?next=` or the dashboard.
  */
 export default function FinishClient() {
   const router = useRouter();
+  const next = useSearchParams().get("next");
   const [error, setError] = useState(false);
 
   useEffect(() => {
@@ -19,7 +20,7 @@ export default function FinishClient() {
     const go = () => {
       if (!settled) {
         settled = true;
-        router.replace("/dash");
+        router.replace(next || "/dash");
       }
     };
     supabase.auth.getSession().then(({ data }) => {
@@ -35,14 +36,14 @@ export default function FinishClient() {
       sub.subscription.unsubscribe();
       clearTimeout(timeout);
     };
-  }, [router]);
+  }, [router, next]);
 
   return (
     <div className="flex min-h-screen flex-col">
       <main className="flex flex-1 flex-col items-center justify-center gap-3 px-4">
         {error ? (
           <>
-            <p className="text-sm font-medium">The sign-in link seems to have stalled.</p>
+            <p className="text-sm font-medium">Signing you in took too long and timed out.</p>
             <Link
               href="/auth"
               className="rounded-lg border border-line px-4 py-2 text-sm transition-colors hover:bg-subtle"
