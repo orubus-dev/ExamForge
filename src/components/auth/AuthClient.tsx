@@ -62,7 +62,7 @@ export default function AuthClient({ initialMode }: { initialMode: "signin" | "s
       setChallengeId(body.challenge_id);
       setDestinationHint(body.destination_hint ?? "");
       setStep("relay-otp");
-      toast.push({ kind: "info", title: "Code sent", body: `Relay sent a one-time code to ${body.destination_hint ?? "you"}.` });
+      toast.push({ kind: "info", title: "Code sent", body: `ExamForge sent a one-time code to ${body.destination_hint ?? "your"} Relay chats — open Relay to read it.` });
     } catch (e) {
       setError(e instanceof Error ? relayError(e.message) : "Could not send the code");
     } finally {
@@ -226,7 +226,7 @@ export default function AuthClient({ initialMode }: { initialMode: "signin" | "s
               Relay sign-in
             </div>
             <p className="mt-1 text-xs text-muted">
-              Enter your Relay username — Relay sends a one-time code to you.
+              Enter your Relay username — ExamForge sends a one-time code as a chat message to your Relay account.
             </p>
             <div className="mt-3">
               <Label htmlFor="relay-username">Relay username</Label>
@@ -263,7 +263,9 @@ export default function AuthClient({ initialMode }: { initialMode: "signin" | "s
               <KeyRound size={16} className="text-muted" aria-hidden />
               Enter the 6-digit code
             </div>
-            <p className="mt-1 text-xs text-muted">Relay sent it to {destinationHint || "you"}</p>
+            <p className="mt-1 text-xs text-muted">
+              Sent from the official <span className="font-medium">ExamForge</span> account to {destinationHint || "your Relay account"} — open Relay, then check your chats.
+            </p>
             <div className="mt-3">
               <Input
                 inputMode="numeric"
@@ -466,10 +468,8 @@ function relayError(code: string): string {
   switch (code) {
     case "unknown_username":
       return "No Relay account has that username.";
-    case "no_channel":
-      return "That Relay account has no email on file — add one in Relay, then retry.";
     case "invalid_code":
-      return "That code is not valid — check the latest email from Relay.";
+      return "That code is not valid — check the latest ExamForge message in your Relay chats.";
     case "expired":
       return "The code expired — request a new one.";
     case "too_many_attempts":
@@ -477,7 +477,8 @@ function relayError(code: string): string {
     case "too_many_sends":
       return "Too many codes sent — wait ~15 minutes.";
     case "delivery_failed":
-      return "Relay could not deliver the code right now — try again shortly.";
+    case "sender_unavailable":
+      return "Relay could not deliver the chat message right now — try again shortly.";
     case "already_used":
       return "That code was already used — request a new one.";
     default:
