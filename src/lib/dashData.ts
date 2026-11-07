@@ -5,7 +5,9 @@ import type { ShellViewer } from "@/components/AppShell";
 import type { DashData, DashExam, TeacherClass } from "@/components/dash/DashClient";
 import { supabaseServer } from "@/lib/supabase/server";
 import { fetchInboxData, unreadCount } from "@/lib/inbox";
-import type { Exam } from "@/lib/types";
+import { staffStatus } from "@/lib/permissions";
+import type { Exam, ExamSession, PermFlag } from "@/lib/types";
+import { DEFAULT_TEACHER_PERMS } from "@/lib/types";
 
 export interface RolePageResult {
   viewer: NonNullable<Awaited<ReturnType<typeof getViewer>>>;
@@ -72,6 +74,51 @@ export async function loadRolePage(allowed: ViewerRole[]): Promise<RolePageResul
     }));
   }
 
+  // Effective staff flags for the dashboard UI — the same toggles the school
+  // console edits. Teachers see exactly what they have been granted.
+  let staffPerms: Record<PermFlag, boolean> | null = null;
+  if (role === "teacher" && membership) {
+    const staff = await staffStatus(membership.school_id, viewer.user.id, viewer.memberships);
+    staffPerms = staff?.perms ?? { ...DEFAULT_TEACHER_PERMS };
+  } else if (role === "org_admin") {
+    staffPerms = {
+      create_exams: true,
+      publish_results: true,
+      manage_question_bank: true,
+      manage_classes: true,
+      message_students: true,
+      view_analytics: true,
+      manage_students: true,
+      proctor_exams: true,
+    };
+  }
+
+  // Analytics for the teacher dashboard (gated by the view_analytics toggle;
+  // org_admins always get it). Uses the cookie client — RLS staff reads apply.
+  let analytics: DashData["analytics"] = [];
+  if ((role === "teacher" || role === "org_admin") && staffPerms?.view_analytics && exams.length > 0) {
+    const sesRes = await supabase
+      .from("exam_sessions")
+      .select("exam_id,status,score,total_points")
+      .in("exam_id", exams.map((e) => e.id));
+    const sessions = (sesRes.data as Pick<ExamSession, "exam_id" | "status" | "score" | "total_points">[]) ?? [];
+    analytics = exams.map((e) => {
+      const rows = sessions.filter((s) => s.exam_id === e.id);
+      const graded = rows.filter((s) => s.status === "graded" && (s.total_points ?? 0) > 0);
+      const avg =
+        graded.length === 0
+          ? null
+          : (graded.reduce((acc, s) => acc + (s.score ?? 0) / (s.total_points || 1), 0) / graded.length) * 100;
+      return {
+        exam_id: e.id,
+        title: e.title,
+        sessions: rows.length,
+        submitted: rows.filter((s) => s.status === "submitted" || s.status === "graded").length,
+        avg_pct: avg,
+      };
+    });
+  }
+
   if (membership) {
     const { data: classRows } = await supabase
       .from("classes")
@@ -113,6 +160,8 @@ export async function loadRolePage(allowed: ViewerRole[]): Promise<RolePageResul
       exams,
       classes,
       counts,
+      staffPerms,
+      analytics,
     },
   };
 }

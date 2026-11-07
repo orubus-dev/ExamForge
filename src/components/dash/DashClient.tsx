@@ -16,6 +16,7 @@ import {
   Inbox as InboxIcon,
   Monitor,
   Radio,
+  BarChart3,
 } from "lucide-react";
 import {
   Badge,
@@ -30,7 +31,7 @@ import {
   useToast,
 } from "@/components/ui";
 import { STATUS_LABEL, STATUS_TONE, cn } from "@/lib/utils";
-import type { ExamStatus } from "@/lib/types";
+import type { ExamStatus, PermFlag } from "@/lib/types";
 import type { ShellViewer } from "@/components/AppShell";
 
 export interface DashExam {
@@ -48,6 +49,14 @@ export interface TeacherClass {
   short_code: string;
 }
 
+export interface DashAnalytics {
+  exam_id: string;
+  title: string;
+  sessions: number;
+  submitted: number;
+  avg_pct: number | null;
+}
+
 export interface DashData extends ShellViewer {
   kind: string;
   hasMemberships: boolean;
@@ -55,6 +64,9 @@ export interface DashData extends ShellViewer {
   exams: DashExam[];
   classes: TeacherClass[];
   counts: { members: number; classes: number; invites: number };
+  /** Effective staff toggles (null for students) — mirror of the school console. */
+  staffPerms: Record<PermFlag, boolean> | null;
+  analytics: DashAnalytics[];
 }
 
 function JoinCodeForm() {
@@ -175,6 +187,8 @@ export function StudentView({ data }: { data: DashData }) {
 
 export function TeacherView({ data }: { data: DashData }) {
   const [createOpen, setCreateOpen] = useState(false);
+  const canManageStudents = data.staffPerms?.manage_students ?? false;
+  const canViewAnalytics = data.staffPerms?.view_analytics ?? false;
 
   return (
     <div className="grid gap-4 lg:grid-cols-3">
@@ -227,28 +241,41 @@ export function TeacherView({ data }: { data: DashData }) {
       </Card>
 
       <div className="space-y-4">
-        <Card className="p-6">
-          <div className="flex items-center gap-2">
-            <UserPlus size={18} className="text-moss-600" aria-hidden />
-            <h2 className="text-sm font-semibold">Create student account</h2>
-          </div>
-          <p className="mt-3 text-xs text-muted">
-            Issue a school Exam ID (no email needed) — the student signs in with it and a password.
-          </p>
-          <Button
-            size="sm"
-            className="mt-3"
-            onClick={() => setCreateOpen(true)}
-            disabled={data.classes.length === 0}
-          >
-            <Plus size={15} aria-hidden /> New student
-          </Button>
-          {data.classes.length === 0 && (
-            <p className="mt-2 text-[11px] text-muted">
-              Ask your school admin to create a class first.
+        {canManageStudents ? (
+          <Card className="p-6">
+            <div className="flex items-center gap-2">
+              <UserPlus size={18} className="text-moss-600" aria-hidden />
+              <h2 className="text-sm font-semibold">Create student account</h2>
+            </div>
+            <p className="mt-3 text-xs text-muted">
+              Issue a school Exam ID (no email needed) — the student signs in with it and a password.
             </p>
-          )}
-        </Card>
+            <Button
+              size="sm"
+              className="mt-3"
+              onClick={() => setCreateOpen(true)}
+              disabled={data.classes.length === 0}
+            >
+              <Plus size={15} aria-hidden /> New student
+            </Button>
+            {data.classes.length === 0 && (
+              <p className="mt-2 text-[11px] text-muted">
+                Ask your school admin to create a class first.
+              </p>
+            )}
+          </Card>
+        ) : (
+          <Card className="p-6">
+            <div className="flex items-center gap-2">
+              <UserPlus size={18} className="text-muted" aria-hidden />
+              <h2 className="text-sm font-semibold">Student accounts</h2>
+            </div>
+            <p className="mt-3 text-xs text-muted">
+              Your school admin has not enabled student management for your account. Once they flip
+              it in the school console, you can issue Exam IDs here.
+            </p>
+          </Card>
+        )}
 
         <Card className="p-6">
           <div className="flex items-center gap-2">
@@ -281,6 +308,39 @@ export function TeacherView({ data }: { data: DashData }) {
           </Link>
         </Card>
       </div>
+
+      {canViewAnalytics && data.analytics.length > 0 && (
+        <Card className="p-6 lg:col-span-3">
+          <div className="flex items-center gap-2">
+            <BarChart3 size={18} className="text-moss-600" aria-hidden />
+            <h2 className="text-sm font-semibold">Results overview</h2>
+          </div>
+          <div className="scroll-slim mt-3 max-h-72 overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-line text-left text-xs text-muted">
+                  <th className="py-2 font-medium">Exam</th>
+                  <th className="py-2 font-medium">Started</th>
+                  <th className="py-2 font-medium">Submitted</th>
+                  <th className="py-2 font-medium">Avg score</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.analytics.map((a) => (
+                  <tr key={a.exam_id} className="border-b border-line/60 last:border-0">
+                    <td className="max-w-56 truncate py-2">{a.title}</td>
+                    <td className="py-2">{a.sessions}</td>
+                    <td className="py-2">{a.submitted}</td>
+                    <td className="py-2 font-medium">
+                      {a.avg_pct === null ? "—" : `${Math.round(a.avg_pct)}%`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
 
       <CreateStudentModal
         open={createOpen}

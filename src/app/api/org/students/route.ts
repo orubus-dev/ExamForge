@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { bad, ok, parseBody, requireAuth, roleMember } from "@/lib/api";
+import { bad, ok, parseBody, requireAuth } from "@/lib/api";
+import { staffStatus } from "@/lib/permissions";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
@@ -18,8 +19,8 @@ const Body = z.object({
  *  2. create the auth user with a synthetic <tag>@students.examforge.app email
  *  3. upsert the profile + school membership (with class)
  *
- * Allowed for the school admin AND its teachers (teachers create students for
- * their own classes — the whole point of a classroom tool).
+ * Allowed for the school admin always, and for teachers the school has
+ * explicitly granted the manage_students flag (the "Manage students" toggle).
  */
 
 function nameBase(fullName: string): string {
@@ -40,8 +41,12 @@ export async function POST(req: Request) {
   if (!parsed.data) return parsed.res;
   const { school_id, full_name, class_id, password } = parsed.data;
 
-  const member = roleMember(auth.memberships, ["org_admin", "teacher"], school_id);
-  if (!member) return bad("Only this school's teachers or admin can create student accounts.", 403);
+  // Admin always; teachers only with the manage_students toggle. Enforced —
+  // flipping the toggle in the school console changes this immediately.
+  const staff = await staffStatus(school_id, auth.user.id, auth.memberships);
+  if (!staff || (!staff.isOrgAdmin && !(staff.isTeacher && staff.perms.manage_students))) {
+    return bad("Student management is not enabled for your account in this school.", 403);
+  }
 
   const admin = supabaseAdmin();
   try {

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { bad, ok, parseBody, requireAuth } from "@/lib/api";
-import { examAccess } from "@/lib/examAccess";
+import { staffStatus } from "@/lib/permissions";
 import type { Exam } from "@/lib/types";
 
 export const runtime = "edge";
@@ -24,15 +24,32 @@ const PostBody = z.object({ question: QuestionSchema });
 const PatchBody = z.object({ question_id: z.string().uuid(), question: QuestionSchema });
 const DeleteBody = z.object({ question_id: z.string().uuid() });
 
-async function ownedExam(
+/**
+ * Who may edit an exam's questions: its creator always; otherwise a school
+ * org_admin, or a teacher explicitly granted manage_question_bank. The
+ * "Manage question bank" toggle gates cross-teacher editing.
+ */
+async function managedExam(
   examId: string,
-  auth: { user: { id: string }; memberships: Parameters<typeof examAccess>[2] }
+  auth: { user: { id: string }; memberships: Parameters<typeof staffStatus>[2] }
 ): Promise<{ exam: Exam } | { res: ReturnType<typeof bad> }> {
   const row = await supabaseAdmin().from("exams").select("*").eq("id", examId).maybeSingle();
   const exam = row.data as Exam | null;
   if (!exam) return { res: bad("Exam not found.", 404) };
-  if (!(await examAccess(exam, auth.user.id, auth.memberships))) {
-    return { res: bad("You do not have access to this exam.", 403) };
+
+  const isCreator = exam.created_by === auth.user.id;
+  if (!isCreator) {
+    if (!exam.school_id) return { res: bad("You do not have access to this exam.", 403) };
+    const staff = await staffStatus(exam.school_id, auth.user.id, auth.memberships);
+    const allowed = !!staff && (staff.isOrgAdmin || (staff.isTeacher && staff.perms.manage_question_bank));
+    if (!allowed) {
+      return {
+        res: bad(
+          "Only the exam's creator, a question-bank manager, or the school admin can edit these questions.",
+          403
+        ),
+      };
+    }
   }
   if (["live", "closed", "graded"].includes(exam.status)) {
     return { res: bad("Questions are locked once the exam is running.", 400) };
@@ -72,7 +89,7 @@ export async function PUT(
   const parsed = await parseBody(req, PutBody);
   if (!parsed.data) return parsed.res;
 
-  const owned = await ownedExam(params.id, auth);
+  const owned = await managedExam(params.id, auth);
   if ("res" in owned) return owned.res;
 
   const admin = supabaseAdmin();
@@ -98,7 +115,7 @@ export async function POST(
   const parsed = await parseBody(req, PostBody);
   if (!parsed.data) return parsed.res;
 
-  const owned = await ownedExam(params.id, auth);
+  const owned = await managedExam(params.id, auth);
   if ("res" in owned) return owned.res;
 
   const admin = supabaseAdmin();
@@ -122,7 +139,7 @@ export async function PATCH(
   const parsed = await parseBody(req, PatchBody);
   if (!parsed.data) return parsed.res;
 
-  const owned = await ownedExam(params.id, auth);
+  const owned = await managedExam(params.id, auth);
   if ("res" in owned) return owned.res;
 
   const upd = await supabaseAdmin()
@@ -144,7 +161,7 @@ export async function DELETE(
   const parsed = await parseBody(req, DeleteBody);
   if (!parsed.data) return parsed.res;
 
-  const owned = await ownedExam(params.id, auth);
+  const owned = await managedExam(params.id, auth);
   if ("res" in owned) return owned.res;
 
   const admin = supabaseAdmin();

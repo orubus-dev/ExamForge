@@ -235,3 +235,31 @@ export interface Subscription {
   renews_at: string | null;
   created_at: string;
 }
+
+// ── Staff permission toggles (client-safe constants) ────────────────────────
+// Single source of truth shared by the school console UI and the server-side
+// enforcer in lib/permissions.ts (which adds the service-role lookups).
+export const PERM_KEYS = [
+  "create_exams",
+  "publish_results",
+  "manage_question_bank",
+  "manage_classes",
+  "message_students",
+  "view_analytics",
+  "manage_students",
+  "proctor_exams",
+] as const;
+
+export type PermFlag = (typeof PERM_KEYS)[number];
+
+/** What a teacher gets when the school has not configured anything explicit. */
+export const DEFAULT_TEACHER_PERMS: Record<PermFlag, boolean> = {
+  create_exams: true,
+  publish_results: false,
+  manage_question_bank: false,
+  manage_classes: false,
+  message_students: true,
+  view_analytics: false,
+  manage_students: false,
+  proctor_exams: false,
+};

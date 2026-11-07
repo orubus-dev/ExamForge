@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { bad, ok, parseBody, requireAuth } from "@/lib/api";
-import { examAccess } from "@/lib/examAccess";
+import { staffStatus } from "@/lib/permissions";
 import type { Exam } from "@/lib/types";
 
 export const runtime = "edge";
@@ -24,8 +24,26 @@ export async function POST(req: Request) {
   const row = await admin.from("exams").select("*").eq("id", exam_id).maybeSingle();
   const exam = row.data as Exam | null;
   if (!exam) return bad("Exam not found.", 404);
-  if (!(await examAccess(exam, auth.user.id, auth.memberships))) {
-    return bad("Only the exam owner or the school admin can publish results.", 403);
+
+  // Who may publish: the school admin always; the exam's creator only when the
+  // school granted them the publish_results flag; independent (school-less)
+  // creators always. This is what the "Publish results" toggle gates.
+  const isCreator = exam.created_by === auth.user.id;
+  let allowed = false;
+  if (!exam.school_id) {
+    allowed = isCreator;
+  } else {
+    const staff = await staffStatus(exam.school_id, auth.user.id, auth.memberships);
+    allowed =
+      !!staff &&
+      (staff.isOrgAdmin ||
+        (staff.isTeacher && isCreator && staff.perms.publish_results));
+  }
+  if (!allowed) {
+    return bad(
+      "Only the school admin — or the exam's creator with publish permission — can publish results.",
+      403
+    );
   }
   if (!["closed", "graded", "live"].includes(exam.status)) {
     return bad("Results publish after submissions.", 400);

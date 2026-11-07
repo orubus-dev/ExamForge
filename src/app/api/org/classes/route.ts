@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { bad, ok, parseBody, requireAuth, roleMember } from "@/lib/api";
+import { staffStatus } from "@/lib/permissions";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
@@ -19,7 +20,7 @@ const PatchBody = z.object({
 
 const DeleteBody = z.object({ class_id: z.string().uuid() });
 
-/** org_admin only: create a class. */
+/** Create a class: org_admin always, or a teacher with manage_classes. */
 export async function POST(req: Request) {
   const auth = await requireAuth();
   if (!auth.ok) return auth.res;
@@ -27,8 +28,10 @@ export async function POST(req: Request) {
   if (!parsed.data) return parsed.res;
   const { school_id, name, short_code } = parsed.data;
 
-  const member = roleMember(auth.memberships, ["org_admin"], school_id);
-  if (!member) return bad("Only the school admin can manage classes.", 403);
+  const staff = await staffStatus(school_id, auth.user.id, auth.memberships);
+  if (!staff || (!staff.isOrgAdmin && !(staff.isTeacher && staff.perms.manage_classes))) {
+    return bad("Class management is not enabled for your account in this school.", 403);
+  }
 
   const admin = supabaseAdmin();
   try {

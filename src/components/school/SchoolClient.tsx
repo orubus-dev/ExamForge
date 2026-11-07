@@ -29,6 +29,7 @@ import {
   useToast,
 } from "@/components/ui";
 import { copyText, fmtDate, suggestShortCode } from "@/lib/utils";
+import { DEFAULT_TEACHER_PERMS, type PermFlag } from "@/lib/types";
 import type { SchoolInvite } from "@/lib/types";
 
 export interface SchoolMemberRow {
@@ -54,6 +55,16 @@ export interface SchoolEventRow {
   at: string;
 }
 
+export interface SchoolExamStat {
+  exam_id: string;
+  title: string;
+  status: string;
+  sessions: number;
+  submitted: number;
+  graded: number;
+  avg_pct: number | null;
+}
+
 export interface SchoolData {
   myUserId: string;
   school: {
@@ -67,9 +78,13 @@ export interface SchoolData {
   members: SchoolMemberRow[];
   invites: SchoolInvite[];
   events: SchoolEventRow[];
+  /** Saved teacher permission flags by user_id — the editor shows these. */
+  permsByTeacher: Record<string, Partial<Record<PermFlag, boolean>>>;
+  /** Per-exam result stats for the Analytics tab (org_admin view). */
+  examStats: SchoolExamStat[];
 }
 
-const PERM_LABELS: { key: string; label: string }[] = [
+const PERM_LABELS: { key: PermFlag; label: string }[] = [
   { key: "create_exams", label: "Create exams" },
   { key: "publish_results", label: "Publish results" },
   { key: "manage_question_bank", label: "Manage question bank" },
@@ -79,17 +94,6 @@ const PERM_LABELS: { key: string; label: string }[] = [
   { key: "manage_students", label: "Manage students" },
   { key: "proctor_exams", label: "Proctor exams" },
 ];
-
-const DEFAULT_PERMS: Record<string, boolean> = {
-  create_exams: true,
-  publish_results: false,
-  manage_question_bank: false,
-  manage_classes: false,
-  message_students: true,
-  view_analytics: false,
-  manage_students: false,
-  proctor_exams: false,
-};
 
 export default function SchoolClient(data: SchoolData) {
   const router = useRouter();
@@ -217,6 +221,7 @@ export default function SchoolClient(data: SchoolData) {
           { id: "students", label: "Students" },
           { id: "broadcast", label: "Broadcast" },
           { id: "invites", label: "Invites" },
+          { id: "analytics", label: "Analytics" },
           { id: "events", label: "Events" },
         ]}
         value={tab}
@@ -228,6 +233,7 @@ export default function SchoolClient(data: SchoolData) {
       {tab === "students" && <StudentsTab data={data} busy={busy} setBusy={setBusy} />}
       {tab === "broadcast" && <BroadcastTab data={data} />}
       {tab === "invites" && <InvitesTab data={data} />}
+      {tab === "analytics" && <AnalyticsTab data={data} />}
       {tab === "events" && <EventsTab data={data} />}
     </div>
   );
@@ -340,7 +346,7 @@ function TeachersTab({ data, busy, setBusy }: TabProps) {
   const router = useRouter();
   const toast = useToast();
   const [who, setWho] = useState("");
-  const [perms, setPerms] = useState<Record<string, boolean>>({ ...DEFAULT_PERMS });
+  const [perms, setPerms] = useState<Record<PermFlag, boolean>>({ ...DEFAULT_TEACHER_PERMS });
   const [target, setTarget] = useState<SchoolMemberRow | null>(null);
 
   const invite = async () => {
@@ -426,10 +432,13 @@ function TeachersTab({ data, busy, setBusy }: TabProps) {
                     <p className="text-xs text-muted">{m.username}</p>
                   </div>
                   <div className="flex items-center gap-2">
-                    {m.role === "org_admin" && <Badge tone="info">Admin</Badge>}
-                    <Button variant="secondary" size="sm" onClick={() => setTarget(m)}>
-                      Permissions
-                    </Button>
+                    {m.role === "org_admin" ? (
+                      <Badge tone="info">Admin — full access</Badge>
+                    ) : (
+                      <Button variant="secondary" size="sm" onClick={() => setTarget(m)}>
+                        Permissions
+                      </Button>
+                    )}
                   </div>
                 </li>
               ))}
@@ -443,10 +452,12 @@ function TeachersTab({ data, busy, setBusy }: TabProps) {
         onClose={() => setTarget(null)}
         title={`Permissions — ${target?.full_name || target?.username || ""}`}
       >
-        {target && data.school && (
+        {target && data.school && target.role !== "org_admin" && (
           <PermEditor
+            key={target.user_id}
             schoolId={data.school.id}
             teacherId={target.user_id}
+            initial={{ ...DEFAULT_TEACHER_PERMS, ...(data.permsByTeacher[target.user_id] ?? {}) }}
             onDone={() => {
               setTarget(null);
               router.refresh();
@@ -461,15 +472,17 @@ function TeachersTab({ data, busy, setBusy }: TabProps) {
 function PermEditor({
   schoolId,
   teacherId,
+  initial,
   onDone,
 }: {
   schoolId: string;
   teacherId: string;
+  initial: Record<PermFlag, boolean>;
   onDone: () => void;
 }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
-  const [perms, setPerms] = useState<Record<string, boolean>>({ ...DEFAULT_PERMS });
+  const [perms, setPerms] = useState<Record<PermFlag, boolean>>({ ...initial });
 
   const save = async () => {
     setBusy(true);
@@ -1027,6 +1040,58 @@ function BroadcastTab({ data }: { data: SchoolData }) {
         >
           <Radio size={15} aria-hidden /> Send broadcast
         </Button>
+      </div>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────── analytics
+
+function AnalyticsTab({ data }: { data: SchoolData }) {
+  return (
+    <Card className="p-6">
+      <div className="flex items-center gap-2">
+        <Activity size={18} className="text-moss-600" aria-hidden />
+        <h2 className="text-sm font-semibold">Exam results overview</h2>
+      </div>
+      <p className="mt-1 text-xs text-muted">
+        Submissions and average scores per exam. Individual student breakdowns live on each
+        exam&apos;s results page.
+      </p>
+      <div className="scroll-slim mt-3 max-h-96 overflow-y-auto">
+        {data.examStats.length === 0 ? (
+          <EmptyState
+            title="Nothing to analyse yet"
+            hint="Once students take exams, submission counts and averages appear here."
+          />
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-line text-left text-xs text-muted">
+                <th className="py-2 font-medium">Exam</th>
+                <th className="py-2 font-medium">Status</th>
+                <th className="py-2 font-medium">Started</th>
+                <th className="py-2 font-medium">Submitted</th>
+                <th className="py-2 font-medium">Graded</th>
+                <th className="py-2 font-medium">Avg score</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.examStats.map((s) => (
+                <tr key={s.exam_id} className="border-b border-line/60 last:border-0">
+                  <td className="max-w-48 truncate py-2">{s.title}</td>
+                  <td className="py-2 capitalize text-muted">{s.status}</td>
+                  <td className="py-2">{s.sessions}</td>
+                  <td className="py-2">{s.submitted}</td>
+                  <td className="py-2">{s.graded}</td>
+                  <td className="py-2 font-medium">
+                    {s.avg_pct === null ? "—" : `${Math.round(s.avg_pct)}%`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </Card>
   );

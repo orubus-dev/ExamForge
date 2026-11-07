@@ -6,7 +6,7 @@ import MonitorClient, { type MonitorData } from "@/components/exams/MonitorClien
 import { getViewer, primaryRole } from "@/lib/session";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { fetchInboxData, unreadCount } from "@/lib/inbox";
-import { examAccess } from "@/lib/examAccess";
+import { staffStatus } from "@/lib/permissions";
 import type { Exam, ExamSession, Profile, Question } from "@/lib/types";
 
 export const runtime = "edge";
@@ -25,9 +25,17 @@ export default async function MonitorPage({
   const admin = supabaseAdmin();
   const row = await admin.from("exams").select("*").eq("id", params.id).maybeSingle();
   const exam = row.data as Exam | null;
-  if (!exam || !(await examAccess(exam, viewer.user.id, viewer.memberships))) {
-    redirect("/exams");
+  if (!exam) redirect("/exams");
+
+  // Live monitoring is for the exam's creator, the school admin, and teachers
+  // explicitly granted proctor_exams. The "Proctor exams" toggle gates it.
+  const isCreator = exam.created_by === viewer.user.id;
+  let mayMonitor = isCreator;
+  if (!mayMonitor && exam.school_id) {
+    const staff = await staffStatus(exam.school_id, viewer.user.id, viewer.memberships);
+    mayMonitor = !!staff && (staff.isOrgAdmin || (staff.isTeacher && staff.perms.proctor_exams));
   }
+  if (!mayMonitor) redirect("/exams");
 
   const [sessionsRes, qres] = await Promise.all([
     admin

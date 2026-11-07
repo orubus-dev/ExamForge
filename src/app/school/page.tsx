@@ -9,7 +9,14 @@ import SchoolClient, {
 import { getViewer } from "@/lib/session";
 import { supabaseServer } from "@/lib/supabase/server";
 import { fetchInboxData, unreadCount } from "@/lib/inbox";
-import type { Exam, Profile, SchoolInvite } from "@/lib/types";
+import type {
+  Exam,
+  ExamSession,
+  Profile,
+  SchoolInvite,
+  TeacherPermissions,
+} from "@/lib/types";
+import type { SchoolExamStat } from "@/components/school/SchoolClient";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
@@ -29,6 +36,8 @@ export default async function SchoolPage() {
   let members: SchoolMemberRow[] = [];
   let invites: SchoolInvite[] = [];
   let events: SchoolEventRow[] = [];
+  let permsByTeacher: SchoolData["permsByTeacher"] = {};
+  let examStats: SchoolExamStat[] = [];
 
   if (school) {
     const [classesRes, membersRes, invitesRes] = await Promise.all([
@@ -63,21 +72,47 @@ export default async function SchoolPage() {
       };
     });
 
+    // Saved teacher permission flags — the Permissions editor must show the
+    // teacher's real current toggles, not defaults.
+    const tpRes = await supabase
+      .from("teacher_permissions")
+      .select("*")
+      .eq("school_id", school.id);
+    for (const tp of (tpRes.data as TeacherPermissions[]) ?? []) {
+      permsByTeacher[tp.teacher_id] = {
+        create_exams: tp.create_exams,
+        publish_results: tp.publish_results,
+        manage_question_bank: tp.manage_question_bank,
+        manage_classes: tp.manage_classes,
+        message_students: tp.message_students,
+        view_analytics: tp.view_analytics,
+        manage_students: tp.manage_students,
+        proctor_exams: tp.proctor_exams,
+      };
+    }
+
     // Recent exam events across the school's exams (staff RLS read)
     if (members.some((m) => m.role === "org_admin")) {
       const examsRes = await supabase
         .from("exams")
-        .select("id,title")
+        .select("id,title,status")
         .eq("school_id", school.id)
-        .limit(100);
-      const examList = (examsRes.data as { id: string; title: string }[]) ?? [];
+        .order("created_at", { ascending: false })
+        .limit(50);
+      const examList = (examsRes.data as Pick<Exam, "id" | "title" | "status">[]) ?? [];
       if (examList.length > 0) {
-        const evRes = await supabase
-          .from("exam_events")
-          .select("id,exam_id,kind,at")
-          .in("exam_id", examList.map((e) => e.id))
-          .order("at", { ascending: false })
-          .limit(30);
+        const [evRes, sesRes] = await Promise.all([
+          supabase
+            .from("exam_events")
+            .select("id,exam_id,kind,at")
+            .in("exam_id", examList.map((e) => e.id))
+            .order("at", { ascending: false })
+            .limit(30),
+          supabase
+            .from("exam_sessions")
+            .select("exam_id,status,score,total_points")
+            .in("exam_id", examList.map((e) => e.id)),
+        ]);
         events = ((evRes.data as { id: number; exam_id: string; kind: string; at: string }[]) ?? []).map(
           (ev) => ({
             id: ev.id,
@@ -86,6 +121,30 @@ export default async function SchoolPage() {
             at: ev.at,
           })
         );
+
+        const sessions = (sesRes.data as Pick<ExamSession, "exam_id" | "status" | "score" | "total_points">[]) ?? [];
+        examStats = examList.map((e) => {
+          const rows = sessions.filter((s) => s.exam_id === e.id);
+          const submitted = rows.filter(
+            (s) => s.status === "submitted" || s.status === "graded"
+          );
+          const graded = rows.filter((s) => s.status === "graded");
+          const withTotal = graded.filter((s) => (s.total_points ?? 0) > 0);
+          const avg =
+            withTotal.length === 0
+              ? null
+              : withTotal.reduce((acc, s) => acc + (s.score ?? 0) / (s.total_points || 1), 0) /
+                withTotal.length;
+          return {
+            exam_id: e.id,
+            title: e.title,
+            status: e.status,
+            sessions: rows.length,
+            submitted: submitted.length,
+            graded: graded.length,
+            avg_pct: avg === null ? null : avg * 100,
+          };
+        });
       }
     }
   }
@@ -107,6 +166,8 @@ export default async function SchoolPage() {
     members,
     invites,
     events,
+    permsByTeacher,
+    examStats,
   };
 
   return (

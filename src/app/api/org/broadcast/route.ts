@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { bad, ok, parseBody, requireAuth, roleMember } from "@/lib/api";
+import { bad, ok, parseBody, requireAuth } from "@/lib/api";
+import { staffStatus } from "@/lib/permissions";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
@@ -15,7 +16,8 @@ const Body = z.object({
 
 /**
  * School broadcast — delivers an inbox message to every targeted member of the
- * school (all / students / teachers / one class). Admin-only.
+ * school (all / students / teachers / one class). The admin always can;
+ * teachers need the message_students toggle and may only address one class.
  */
 export async function POST(req: Request) {
   const auth = await requireAuth();
@@ -24,8 +26,13 @@ export async function POST(req: Request) {
   if (!parsed.data) return parsed.res;
   const { school_id, title, body, class_id, audience } = parsed.data;
 
-  const member = roleMember(auth.memberships, ["org_admin"], school_id);
-  if (!member) return bad("Only the school admin can broadcast.", 403);
+  const staff = await staffStatus(school_id, auth.user.id, auth.memberships);
+  if (!staff || (staff.isTeacher && !staff.perms.message_students)) {
+    return bad("Messaging students is not enabled for your account in this school.", 403);
+  }
+  if (staff.isTeacher && !class_id) {
+    return bad("Teachers broadcast to one class at a time — pick a class.", 403);
+  }
 
   const admin = supabaseAdmin();
   try {
@@ -69,7 +76,11 @@ export async function POST(req: Request) {
       kind: "broadcast",
       title,
       body,
-      payload: { school_id, class_id: class_id ?? null, from: auth.profile?.full_name ?? "School admin" },
+      payload: {
+        school_id,
+        class_id: class_id ?? null,
+        from: auth.profile?.full_name ?? (staff.isOrgAdmin ? "School admin" : "Your teacher"),
+      },
     }));
     const ins = await admin.from("inbox_messages").insert(rows);
     if (ins.error) return bad("Could not deliver the broadcast.", 500);
